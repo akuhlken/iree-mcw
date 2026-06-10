@@ -6,8 +6,8 @@
 
 #include <riscv_vector.h>
 
-#include "iree/builtins/ukernel/arch/riscv_64/common_riscv_64.h"
-#include "iree/builtins/ukernel/arch/riscv_64/mmt4d_riscv_64_internal.h"
+// #include "/home/coden/iree/runtime/src/iree/builtins/ukernel/arch/riscv_64/common_riscv_64.h"
+// #include "iree/builtins/ukernel/arch/riscv_64/mmt4d_riscv_64_internal.h"
 
 typedef struct mmt4d_params_t {
   const void* lhs_buffer;
@@ -26,13 +26,13 @@ typedef struct mmt4d_params_t {
   uint32_t N0;
   uint32_t K0;
   uint32_t flags;
-  const iree_uk_uint64_t* cpu_data;
+  const uint64_t* cpu_data;
 } mmt4d_params_t;
 
 // IREE_UK_ATTRIBUTE_ALWAYS_INLINE static inline void
 iree_uk_mmt4d_tile_s8s8s32_1xXXx1_to_7xXXx1_riscv_64_v(
-    void*  out_tile, const void*  lhs_panel,
-    const void*  rhs_panel,
+    void* out_tile, const void* lhs_panel,
+    const void* rhs_panel,
     const mmt4d_params_t* params, int M0) {
   IREE_UK_ASSERT(M0 >= 1 && M0 <= 7);
   const int8_t* lhs_ptr = lhs_panel;
@@ -43,9 +43,8 @@ iree_uk_mmt4d_tile_s8s8s32_1xXXx1_to_7xXXx1_riscv_64_v(
   int N0 = params->N0;
   size_t vl = N0;
 
-  
   if (M0 == 1) {
-    if (params->flags ) {
+    if (params->flags) {
       acc0 = __riscv_vle32_v_i32m4(out_ptr, vl);
     } else {
       acc0 = __riscv_vmv_v_x_i32m4(0, vl);
