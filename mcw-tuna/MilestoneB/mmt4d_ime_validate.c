@@ -105,8 +105,13 @@ static int run_test(
         lhs, rhs, want, M0, N0, K0, K1, /*accumulate=*/(flags & 1));
 
     int ok = compare_s32(got, want, M0, N0, label);
-    if (ok) printf("[PASS] %s\n", label);
+    // if (ok) printf("[PASS] %s\n", label);
     return ok;
+}
+
+static double get_time_diff(struct timespec start, struct timespec end) {
+    return (double)(end.tv_sec - start.tv_sec) + 
+           (double)(end.tv_nsec - start.tv_nsec) / 1e9;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,8 +123,10 @@ int main(void)
     const int M0 = IME_M0;
     const int N0 = IME_N0;
     const int K0 = IME_K0;
+    printf("m0 = %d, n0 = %d, k0 = %d \n", M0, N0, K0);
 
     int total = 0, passed = 0;
+    struct timespec start, end;
 
     // Allocate panel buffers large enough for K1_max=8.
     const int K1_MAX = 8;
@@ -141,8 +148,12 @@ int main(void)
             char label[64];
             snprintf(label, sizeof label,
                 "overwrite_random K1=%d", K1);
+            clock_gettime(CLOCK_MONOTONIC, &start);
             passed += run_test(label, lhs_buf, rhs_buf, NULL, K1, 0);
+            clock_gettime(CLOCK_MONOTONIC, &end);
             total++;
+            printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
+
         }
     }
 
@@ -158,9 +169,13 @@ int main(void)
             c_init[i] = (int32_t)((int)(rand_r(&seed) % 512) - 256);
         }
 
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("accumulate_random K1=2",
             lhs_buf, rhs_buf, c_init, 2, /*flags=*/1);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
+
     }
 
     // -----------------------------------------------------------------------
@@ -169,9 +184,13 @@ int main(void)
     {
         fill_constant_s8(lhs_buf, M0 * K0, 0);
         fill_constant_s8(rhs_buf, N0 * K0, 7);
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("zero_A K1=1",
             lhs_buf, rhs_buf, NULL, 1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
+
     }
 
     // -----------------------------------------------------------------------
@@ -180,9 +199,13 @@ int main(void)
     {
         fill_constant_s8(lhs_buf, M0 * K0, 3);
         fill_constant_s8(rhs_buf, N0 * K0, 0);
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("zero_B K1=1",
             lhs_buf, rhs_buf, NULL, 1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
+
     }
 
     // -----------------------------------------------------------------------
@@ -191,9 +214,12 @@ int main(void)
     {
         fill_constant_s8(lhs_buf, M0 * K0, 1);
         fill_constant_s8(rhs_buf, N0 * K0, 1);
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("ones K1=1 (expect 8)",
             lhs_buf, rhs_buf, NULL, 1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
     }
 
     // -----------------------------------------------------------------------
@@ -203,9 +229,12 @@ int main(void)
     {
         fill_constant_s8(lhs_buf, M0 * K0, 127);
         fill_constant_s8(rhs_buf, N0 * K0, 127);
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("max_pos A=127 B=127 K1=1",
             lhs_buf, rhs_buf, NULL, 1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
     }
 
     // -----------------------------------------------------------------------
@@ -214,9 +243,12 @@ int main(void)
     {
         fill_constant_s8(lhs_buf, M0 * K0, -128);
         fill_constant_s8(rhs_buf, N0 * K0,  127);
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("extreme neg A=-128 B=127 K1=1",
             lhs_buf, rhs_buf, NULL, 1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
     }
 
     // -----------------------------------------------------------------------
@@ -227,9 +259,12 @@ int main(void)
         fill_constant_s8(lhs_buf, M0 * K0, 1);
         fill_constant_s8(rhs_buf, N0 * K0, 1);
         for (int i = 0; i < M0 * N0; i++) c_init[i] = 1000000;
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("accumulate_large_init K1=1",
             lhs_buf, rhs_buf, c_init, 1, /*flags=*/1);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
     }
 
     // -----------------------------------------------------------------------
@@ -240,9 +275,12 @@ int main(void)
     {
         for (int i = 0; i < M0 * K0; i++) lhs_buf[i] = (i % 2) ? -1 : 1;
         for (int i = 0; i < N0 * K0; i++) rhs_buf[i] = (i % 2) ? -1 : 1;
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("checkerboard K1=1",
             lhs_buf, rhs_buf, NULL, 1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
     }
 
     // -----------------------------------------------------------------------
@@ -252,19 +290,70 @@ int main(void)
         unsigned seed = 0xdeadbeef;
         fill_random_s8(lhs_buf, (size_t)(K1_MAX * M0 * K0), &seed);
         fill_random_s8(rhs_buf, (size_t)(K1_MAX * N0 * K0), &seed);
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("stress_overwrite K1=8",
             lhs_buf, rhs_buf, NULL, K1_MAX, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
 
         for (int i = 0; i < M0 * N0; i++) c_init[i] = 42;
+        clock_gettime(CLOCK_MONOTONIC, &start);
         passed += run_test("stress_accumulate K1=8",
             lhs_buf, rhs_buf, c_init, K1_MAX, 1);
+        clock_gettime(CLOCK_MONOTONIC, &end);
         total++;
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
     }
 
     // -----------------------------------------------------------------------
     // Summary
     // -----------------------------------------------------------------------
     printf("\n%d / %d tests passed.\n", passed, total);
-    return (passed == total) ? 0 : 1;
+   
+
+    // testing all possible combos for M0, N0, K0
+    printf("flag, M0, N0, K0, K1, time\n");
+
+    {    
+        unsigned seed = 42;
+        int flags[] = {0,1};
+        int K1s[] = {8, 16, 32};
+        int M0s[] = {4,8,16};
+        int N0s[] = {4,8,16};
+        // K0 should be the SEW, the size of the type.
+
+        // loop thru flag options
+        for (int f = 0; f < (int)(sizeof flags / sizeof flags[0]); f++) {
+            // m0 loop
+            for (int m = 0; m < (int)(sizeof M0s / sizeof M0s[0]); m++) {
+                // n0 loop
+                for (int n = 0; n < (int)(sizeof N0s / sizeof N0s[0]); n++) {
+                    // k1 loop
+                    for (int i = 0; i < (int)(sizeof K1s / sizeof K1s[0]); i++) {
+                        int K1 = K1s[i];
+                        int M0 = M0s[m];
+                        int N0 = N0s[n];
+                        int K0 = 8;
+                        
+                        // printf("trying: %d, %d, %d, %d, %d\n", flags[f], M0, N0, K0, K1);
+                        
+                        fill_random_s8(lhs_buf, (size_t)(K1 * M0 * K0), &seed);
+                        fill_random_s8(rhs_buf, (size_t)(K1 * N0 * K0), &seed);
+
+                        clock_gettime(CLOCK_MONOTONIC, &start);
+                        passed += run_test(("overwrite_random K1"), lhs_buf, rhs_buf, NULL, K1, flags[f]);
+                        clock_gettime(CLOCK_MONOTONIC, &end);
+                        printf("%d, %d, %d, %d, %d, %f\n", flags[f], M0, N0, K0, K1, get_time_diff(start, end));
+                    }
+                    // printf("end n loop\n");
+                }
+                // printf("end m loop\n");
+            }
+            // printf("end f loop\n");
+        } 
+        // printf("end test\n");  
+    }
+    printf("done\n");
+    return 1;
 }
