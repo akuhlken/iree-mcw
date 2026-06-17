@@ -1,21 +1,37 @@
 // mmt4d_ime_s8s8s32.c
 //
-// Milestone B — Task 1: Standalone IME microkernel in mmt4d panel layout
+// Milestone B — Task 1: Standalone IME microkernels in mmt4d panel layout
 //
 // Implements: C[M0 x N0] += A[K1, M0, K0] * B[K1, N0, K0]  (s8 x s8 -> s32)
 // using SpaceMiT IME `vmadot` (Xsmti8i32mm) inline assembly.
 //
 // Hardware target:  SpaceMiT X60 / A60 core  (K1 SoC, Cluster 0, cores 0-3)
 //   VLEN = 256, lambda = 2, W = 4
-//   One vmadot call = 4x4x8 (M x N x K) int8 -> int32 MAC tile
+//   One vmadot call = 4x4x8 (M x N x K) int8 -> int32 MAC tile (the "atom")
 //   Accumulator {vd, vd+1}: 2-vreg group (MUL_C = 2), vd must be even
 //
-// Fixed macro-tile: M0=8, N0=8, K0=8  (two 4x4x8 IME tiles wide in M and N)
-//   A panel: [K1][M0][K0] = K1 * 8 * 8  int8 bytes
-//   B panel: [K1][N0][K0] = K1 * 8 * 8  int8 bytes  (B already column-major
-//            within each K0 chunk — i.e., B[n*K0 + k] — which is exactly
-//            the mmt4d RHS "transposed" layout and what vmadot expects.)
-//   C tile:  [M0][N0]    =      8 * 8  int32 elements
+// This file provides five mmt4d tile functions, each hand-tuned for its shape.
+// Every shape is built from the same 4x4x8 IME atom; they differ only in how
+// many atoms tile the M and N directions (the "grid"):
+//
+//   shape     grid (MT x NT)   atoms   acc pairs   vmadot/step
+//   4x8x8       1 x 2            2        2            2
+//   8x4x8       2 x 1            2        2            2
+//   8x8x8       2 x 2            4        4            4
+//   8x16x8      2 x 4            8        8            8
+//   16x8x8      4 x 2            8        8            8
+//
+//   A panel: [K1][M0][K0]  int8 bytes   (A row-major, K0-contiguous)
+//   B panel: [K1][N0][K0]  int8 bytes   (B already column-major within each K0
+//            chunk — i.e. B[n*K0 + k] — the mmt4d RHS "transposed" layout that
+//            vmadot expects.)
+//   C tile:  [M0][N0]      int32 elements (row-major)
+//
+// Each kernel keeps ALL of its accumulators resident in vector registers across
+// the entire K1 reduction loop, loading each distinct A row-atom and B col-atom
+// exactly once per K1 step (maximum operand reuse). The largest shapes use 8
+// accumulator pairs (v16,v18,...,v30) plus up to 8 operand registers, which
+// fits comfortably in the 32-register file.
 //
 // See SpaceMiT docs-ai: §2.1.1, §2.5 (tile 4x8x4 on A60), §2.7.3 (layouts)
 // and issue #24576 §1.2 for the mmt4d <-> vmadot layout correspondence.
@@ -41,17 +57,9 @@
 #include "mmt4d_ime_s8s8s32.h"
 
 // ---------------------------------------------------------------------------
-// Tile dimensions — must agree with the IREE compiler's enumerate branch
-// and the tiles.inl registration (Milestones C/D).
+// Atomic tile from hardware: one vmadot covers 4 x 4 x 8 on A60 (VLEN=256).
+// (IME_M_ATOM / IME_N_ATOM / IME_K_ATOM / IME_K0 come from the header.)
 // ---------------------------------------------------------------------------
-// #define IME_M0   8   // Output rows  per macro-tile   (2 x IME_M_ATOM)
-// #define IME_N0   8   // Output cols  per macro-tile   (2 x IME_N_ATOM)
-// #define IME_K0   8   // Shared depth per macro-tile   (1 x IME_K_ATOM)
-
-// Atomic tile from hardware: one vmadot covers 4 x 4 x 8 on A60 (VLEN=256)
-#define IME_M_ATOM  4
-#define IME_N_ATOM  4
-#define IME_K_ATOM  8
 
 // ---------------------------------------------------------------------------
 // vmadot inline-asm macro
@@ -59,7 +67,7 @@
 // Computes:  C_acc{vd,vd+1} += A_tile{vs1} * B_tile{vs2}
 //
 // Constraints:
-//   * vd  must be even (register pressure: use v16/v18/v20/v22 for accum)
+//   * vd  must be even (register pressure: use v16/v18/.../v30 for accum)
 //   * LMUL = m1 (set by prior vsetvli e8,m1)
 //   * A tile is 4x8 int8 in vs1 (row-major, K-contiguous)
 //   * B tile is 4x8 int8 in vs2 (column-major = B[n*K0+k], K-contiguous)
@@ -83,87 +91,203 @@
         : "memory")
 
 // ---------------------------------------------------------------------------
-// IME microkernel — mmt4d tile function
+// Accumulator scatter/gather helpers (plain C, called once per kernel, outside
+// the K1 loop — zero impact on the inner reduction loop).
 //
-// Signature mirrors IREE's iree_uk_mmt4d_tile_func_t so it can be dropped
-// into arch/riscv_64/mmt4d_riscv_64_ime.c (Milestone C2) without changes.
+// Each vmadot accumulator pair {vd,vd+1} holds one 4x4 atom as 16 contiguous
+// row-major int32 lanes. The kernels load/store those 16-lane atoms from/to a
+// contiguous scratch buffer with a single vle32.v/vse32.v (e32,m2). These
+// helpers convert between that atom-packed scratch layout and the row-major
+// `out` tile (row stride N0):
 //
-//   lhs   : int8_t[K1][M0][K0]  — A panels in row-major K0-contiguous order
-//   rhs   : int8_t[K1][N0][K0]  — B panels in col-major K0-contiguous order
-//             (i.e. B[k1][n][k] stored at rhs[k1*N0*K0 + n*K0 + k])
-//   out   : int32_t[M0][N0]     — accumulator tile, row-major
-//   M0    : must equal IME_M0 (8)
-//   K0    : must equal IME_K0 (8)
-//   flags : bit 0 = accumulate (1) or overwrite (0)
-//   K1    : reduction panel count
+//   scratch[(mt*NT + nt) * 16 + r * 4 + c]  <->  out[(mt*4 + r)*N0 + (nt*4 + c)]
+//
+// MT = M0 / 4 atoms down, NT = N0 / 4 atoms across.
 // ---------------------------------------------------------------------------
-void iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime(
-    const int8_t  *lhs,   // [K1][M0][K0]
-    const int8_t  *rhs,   // [K1][N0][K0]
-    int32_t       *out,   // [M0][N0]
-    int32_t        M0,
-    int32_t        N0,
-    int32_t        K0,
-    int32_t        flags,
-    int32_t        K1)
+static void ime_gather_acc(const int32_t *out, int32_t *scratch,
+                           int MT, int NT, int N0)
 {
-    // Silence unused-parameter warnings for parameters that are fixed by the
-    // tile size; IREE's dispatch mechanism guarantees M0==8 and K0==8.
+    for (int mt = 0; mt < MT; mt++) {
+        for (int nt = 0; nt < NT; nt++) {
+            int32_t *dst = scratch + (mt * NT + nt) * 16;
+            const int32_t *src = out + (mt * IME_M_ATOM) * N0 + (nt * IME_N_ATOM);
+            for (int r = 0; r < IME_M_ATOM; r++)
+                for (int c = 0; c < IME_N_ATOM; c++)
+                    dst[r * IME_N_ATOM + c] = src[r * N0 + c];
+        }
+    }
+}
+
+static void ime_scatter_acc(int32_t *out, const int32_t *scratch,
+                            int MT, int NT, int N0)
+{
+    for (int mt = 0; mt < MT; mt++) {
+        for (int nt = 0; nt < NT; nt++) {
+            const int32_t *src = scratch + (mt * NT + nt) * 16;
+            int32_t *dst = out + (mt * IME_M_ATOM) * N0 + (nt * IME_N_ATOM);
+            for (int r = 0; r < IME_M_ATOM; r++)
+                for (int c = 0; c < IME_N_ATOM; c++)
+                    dst[r * N0 + c] = src[r * IME_N_ATOM + c];
+        }
+    }
+}
+
+// ===========================================================================
+// 4x8x8  — grid 1 x 2 (1 M-atom, 2 N-atoms)
+//   A atoms: v0
+//   B atoms: v1, v2
+//   acc    : {v16,v17}=A0*B0 , {v18,v19}=A0*B1
+// ===========================================================================
+void iree_uk_mmt4d_tile_s8s8s32_4x8x8_ime(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1)
+{
     (void)M0;
     (void)K0;
+    enum { MT = 1, NT = 2, M0_T = 4, N0_T = 8 };
+    int32_t acc_scratch[MT * NT * 16];
 
-    // -----------------------------------------------------------------------
-    // Accumulator register layout (M0=8, N0=8, K0=8):
-    //
-    // We compute a 2x2 grid of 4x4 atomic tiles:
-    //
-    //            N[0..3]    N[4..7]
-    //   M[0..3]:  acc00      acc01
-    //   M[4..7]:  acc10      acc11
-    //
-    // Each acc{row,col} occupies an even-aligned pair {vd, vd+1}:
-    //   acc00 -> {v16, v17}
-    //   acc01 -> {v18, v19}
-    //   acc10 -> {v20, v21}
-    //   acc11 -> {v22, v23}
-    //
-    // Total accumulator registers: 8  (well within the 32-reg budget)
-    // Operand registers: v0 (A_row0), v1 (B_col0), v2 (A_row1), v3 (B_col1)
-    // -----------------------------------------------------------------------
-
-    // --- initialise / zero accumulators -----------------------------------
     if (flags & 1) {
-        // Accumulate mode: each acc pair {vd,vd+1} holds its 4x4 sub-tile as
-        // 16 contiguous row-major lanes (the vmadot/standalone contract).
-        // `out` is an 8-wide matrix, so gather each 4x4 sub-block into a
-        // contiguous scratch before the contiguous vle32.v.
-        int32_t acc_scratch[4 * 16];
-        for (int r = 0; r < IME_M_ATOM; r++) {
-            for (int c = 0; c < IME_N_ATOM; c++) {
-                acc_scratch[ 0 + r * 4 + c] = out[(0 + r) * N0 + (0 + c)];
-                acc_scratch[16 + r * 4 + c] = out[(0 + r) * N0 + (4 + c)];
-                acc_scratch[32 + r * 4 + c] = out[(4 + r) * N0 + (0 + c)];
-                acc_scratch[48 + r * 4 + c] = out[(4 + r) * N0 + (4 + c)];
-            }
-        }
+        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vle32.v      v16, (%[s0])                   \n\t"
+            "vle32.v      v18, (%[s1])                   \n\t"
+            :
+            : [s0] "r"(acc_scratch + 0), [s1] "r"(acc_scratch + 16)
+            : "memory", "t0", "v16", "v17", "v18", "v19");
+    } else {
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vmv.v.i      v16, 0                         \n\t"
+            "vmv.v.i      v18, 0                         \n\t"
+            :
+            :
+            : "t0", "v16", "v17", "v18", "v19");
+    }
+
+    for (int k1 = 0; k1 < K1; k1++) {
+        const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
+        const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
+        const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
+
+        __asm__ volatile(
+            "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
+            "vle8.v       v0, (%[A0])                    \n\t"
+            "vle8.v       v1, (%[B0])                    \n\t"
+            "vle8.v       v2, (%[B1])                    \n\t"
+            "smt.vmadot   v16, v0, v1                    \n\t"
+            "smt.vmadot   v18, v0, v2                    \n\t"
+            :
+            : [A0] "r"(A0), [B0] "r"(B0), [B1] "r"(B1)
+            : "memory", "t0", "v0", "v1", "v2",
+              "v16", "v17", "v18", "v19");
+    }
+
+    __asm__ volatile(
+        "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+        "vse32.v      v16, (%[s0])                   \n\t"
+        "vse32.v      v18, (%[s1])                   \n\t"
+        :
+        : [s0] "r"(acc_scratch + 0), [s1] "r"(acc_scratch + 16)
+        : "memory", "t0");
+    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+}
+
+// ===========================================================================
+// 8x4x8  — grid 2 x 1 (2 M-atoms, 1 N-atom)
+//   A atoms: v0, v2
+//   B atoms: v1
+//   acc    : {v16,v17}=A0*B0 , {v18,v19}=A1*B0
+// ===========================================================================
+void iree_uk_mmt4d_tile_s8s8s32_8x4x8_ime(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1)
+{
+    (void)M0;
+    (void)K0;
+    enum { MT = 2, NT = 1, M0_T = 8, N0_T = 4 };
+    int32_t acc_scratch[MT * NT * 16];
+
+    if (flags & 1) {
+        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vle32.v      v16, (%[s0])                   \n\t"
+            "vle32.v      v18, (%[s1])                   \n\t"
+            :
+            : [s0] "r"(acc_scratch + 0), [s1] "r"(acc_scratch + 16)
+            : "memory", "t0", "v16", "v17", "v18", "v19");
+    } else {
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vmv.v.i      v16, 0                         \n\t"
+            "vmv.v.i      v18, 0                         \n\t"
+            :
+            :
+            : "t0", "v16", "v17", "v18", "v19");
+    }
+
+    for (int k1 = 0; k1 < K1; k1++) {
+        const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
+        const int8_t *A1 = lhs + k1 * (M0_T * IME_K0) + 1 * IME_M_ATOM * IME_K0;
+        const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
+
+        __asm__ volatile(
+            "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
+            "vle8.v       v0, (%[A0])                    \n\t"
+            "vle8.v       v2, (%[A1])                    \n\t"
+            "vle8.v       v1, (%[B0])                    \n\t"
+            "smt.vmadot   v16, v0, v1                    \n\t"
+            "smt.vmadot   v18, v2, v1                    \n\t"
+            :
+            : [A0] "r"(A0), [A1] "r"(A1), [B0] "r"(B0)
+            : "memory", "t0", "v0", "v1", "v2",
+              "v16", "v17", "v18", "v19");
+    }
+
+    __asm__ volatile(
+        "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+        "vse32.v      v16, (%[s0])                   \n\t"
+        "vse32.v      v18, (%[s1])                   \n\t"
+        :
+        : [s0] "r"(acc_scratch + 0), [s1] "r"(acc_scratch + 16)
+        : "memory", "t0");
+    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+}
+
+// ===========================================================================
+// 8x8x8  — grid 2 x 2 (2 M-atoms, 2 N-atoms)  [canonical shape]
+//   A atoms: v0, v2
+//   B atoms: v1, v3
+//   acc    : {v16}=A0*B0 {v18}=A0*B1 {v20}=A1*B0 {v22}=A1*B1
+// ===========================================================================
+void iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1)
+{
+    (void)M0;
+    (void)K0;
+    enum { MT = 2, NT = 2, M0_T = 8, N0_T = 8 };
+    int32_t acc_scratch[MT * NT * 16];
+
+    if (flags & 1) {
+        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
         __asm__ volatile(
             // Use rd!=x0 (t0) so vl is set to VLMAX; the rd=x0,rs1=x0
             // "keep-vl" form leaves vtype illegal on a fresh context and
             // traps the next vector op (SIGILL) on the SpaceMiT X60.
             "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
-            "vle32.v      v16, (%[s00])                  \n\t"
-            "vle32.v      v18, (%[s01])                  \n\t"
-            "vle32.v      v20, (%[s10])                  \n\t"
-            "vle32.v      v22, (%[s11])                  \n\t"
+            "vle32.v      v16, (%[s0])                   \n\t"
+            "vle32.v      v18, (%[s1])                   \n\t"
+            "vle32.v      v20, (%[s2])                   \n\t"
+            "vle32.v      v22, (%[s3])                   \n\t"
             :
-            : [s00] "r"(acc_scratch + 0),
-              [s01] "r"(acc_scratch + 16),
-              [s10] "r"(acc_scratch + 32),
-              [s11] "r"(acc_scratch + 48)
+            : [s0] "r"(acc_scratch + 0),  [s1] "r"(acc_scratch + 16),
+              [s2] "r"(acc_scratch + 32), [s3] "r"(acc_scratch + 48)
             : "memory", "t0", "v16", "v17", "v18", "v19",
                          "v20", "v21", "v22", "v23");
     } else {
-        // Overwrite mode: zero accumulators with vxor.
         __asm__ volatile(
             "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
             "vmv.v.i      v16, 0                         \n\t"
@@ -176,78 +300,256 @@ void iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime(
               "v20", "v21", "v22", "v23");
     }
 
-    // --- main K1 reduction loop -------------------------------------------
     for (int k1 = 0; k1 < K1; k1++) {
-        // Pointers to the two M0-half A panels and two N0-half B panels:
-        //   lhs layout: [K1][M0][K0] = [K1][8][8]
-        //     A_row0 = lhs[k1 * 8*8 + 0*8]   -> rows 0..3
-        //     A_row1 = lhs[k1 * 8*8 + 4*8]   -> rows 4..7
-        //   rhs layout: [K1][N0][K0] = [K1][8][8]
-        //     B_col0 = rhs[k1 * 8*8 + 0*8]   -> cols 0..3
-        //     B_col1 = rhs[k1 * 8*8 + 4*8]   -> cols 4..7
-        const int8_t *A_row0 = lhs + k1 * (M0 * K0) + 0 * IME_K_ATOM * K0;
-        const int8_t *A_row1 = lhs + k1 * (M0 * K0) + IME_M_ATOM * K0;
-        const int8_t *B_col0 = rhs + k1 * (N0 * K0) + 0 * IME_N_ATOM * K0;
-        const int8_t *B_col1 = rhs + k1 * (N0 * K0) + IME_N_ATOM * K0;
+        const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
+        const int8_t *A1 = lhs + k1 * (M0_T * IME_K0) + 1 * IME_M_ATOM * IME_K0;
+        const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
+        const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
 
         __asm__ volatile(
-            // Set e8,m1: SEW=8, LMUL=1 — required by vmadot on A60.
-            // rd!=x0 (t0) sets vl=VLMAX; the keep-vl form (x0,x0) traps.
             "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
-
-            // Load A sub-tiles (32 bytes each = one 256-bit vector register)
-            "vle8.v       v0, (%[A0])                    \n\t"  // A[0..3][0..7]
-            "vle8.v       v2, (%[A1])                    \n\t"  // A[4..7][0..7]
-
-            // Load B sub-tiles  (B is column-major in mmt4d: B[n*K0 + k])
-            "vle8.v       v1, (%[B0])                    \n\t"  // B[0..3][0..7]
-            "vle8.v       v3, (%[B1])                    \n\t"  // B[4..7][0..7]
-
-            // 2x2 grid of vmadot calls
-            // acc00 (rows 0..3 x cols 0..3):  {v16,v17} += v0 * v1
+            "vle8.v       v0, (%[A0])                    \n\t"
+            "vle8.v       v2, (%[A1])                    \n\t"
+            "vle8.v       v1, (%[B0])                    \n\t"
+            "vle8.v       v3, (%[B1])                    \n\t"
             "smt.vmadot   v16, v0, v1                    \n\t"
-            // acc01 (rows 0..3 x cols 4..7):  {v18,v19} += v0 * v3
             "smt.vmadot   v18, v0, v3                    \n\t"
-            // acc10 (rows 4..7 x cols 0..3):  {v20,v21} += v2 * v1
             "smt.vmadot   v20, v2, v1                    \n\t"
-            // acc11 (rows 4..7 x cols 4..7):  {v22,v23} += v2 * v3
             "smt.vmadot   v22, v2, v3                    \n\t"
             :
-            : [A0] "r"(A_row0), [A1] "r"(A_row1),
-              [B0] "r"(B_col0), [B1] "r"(B_col1)
+            : [A0] "r"(A0), [A1] "r"(A1),
+              [B0] "r"(B0), [B1] "r"(B1)
             : "memory", "t0",
               "v0", "v1", "v2", "v3",
               "v16", "v17", "v18", "v19",
               "v20", "v21", "v22", "v23");
     }
 
-    // --- store accumulators back to C -------------------------------------
-    // Each acc pair holds a 4x4 sub-tile as 16 contiguous row-major lanes.
-    // Store to a contiguous scratch, then scatter into the 8-wide `out`.
-    {
-        int32_t acc_scratch[4 * 16];
+    __asm__ volatile(
+        "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+        "vse32.v      v16, (%[s0])                   \n\t"
+        "vse32.v      v18, (%[s1])                   \n\t"
+        "vse32.v      v20, (%[s2])                   \n\t"
+        "vse32.v      v22, (%[s3])                   \n\t"
+        :
+        : [s0] "r"(acc_scratch + 0),  [s1] "r"(acc_scratch + 16),
+          [s2] "r"(acc_scratch + 32), [s3] "r"(acc_scratch + 48)
+        : "memory", "t0");
+    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+}
+
+// ===========================================================================
+// 8x16x8 — grid 2 x 4 (2 M-atoms, 4 N-atoms)
+//   A atoms: v0, v2
+//   B atoms: v4, v6, v8, v10
+//   acc    : 8 pairs {v16,v18,v20,v22,v24,v26,v28,v30}
+//     row mt=0: A0 * {B0,B1,B2,B3} -> v16 v18 v20 v22
+//     row mt=1: A1 * {B0,B1,B2,B3} -> v24 v26 v28 v30
+// ===========================================================================
+void iree_uk_mmt4d_tile_s8s8s32_8x16x8_ime(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1)
+{
+    (void)M0;
+    (void)K0;
+    enum { MT = 2, NT = 4, M0_T = 8, N0_T = 16 };
+    int32_t acc_scratch[MT * NT * 16];
+
+    if (flags & 1) {
+        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
         __asm__ volatile(
             "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
-            "vse32.v      v16, (%[s00])                  \n\t"
-            "vse32.v      v18, (%[s01])                  \n\t"
-            "vse32.v      v20, (%[s10])                  \n\t"
-            "vse32.v      v22, (%[s11])                  \n\t"
+            "vle32.v      v16, (%[s0])                   \n\t"
+            "vle32.v      v18, (%[s1])                   \n\t"
+            "vle32.v      v20, (%[s2])                   \n\t"
+            "vle32.v      v22, (%[s3])                   \n\t"
+            "vle32.v      v24, (%[s4])                   \n\t"
+            "vle32.v      v26, (%[s5])                   \n\t"
+            "vle32.v      v28, (%[s6])                   \n\t"
+            "vle32.v      v30, (%[s7])                   \n\t"
             :
-            : [s00] "r"(acc_scratch + 0),
-              [s01] "r"(acc_scratch + 16),
-              [s10] "r"(acc_scratch + 32),
-              [s11] "r"(acc_scratch + 48)
-            : "memory", "t0");
-
-        for (int r = 0; r < IME_M_ATOM; r++) {
-            for (int c = 0; c < IME_N_ATOM; c++) {
-                out[(0 + r) * IME_N0 + (0 + c)] = acc_scratch[ 0 + r * 4 + c];
-                out[(0 + r) * IME_N0 + (4 + c)] = acc_scratch[16 + r * 4 + c];
-                out[(4 + r) * IME_N0 + (0 + c)] = acc_scratch[32 + r * 4 + c];
-                out[(4 + r) * IME_N0 + (4 + c)] = acc_scratch[48 + r * 4 + c];
-            }
-        }
+            : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+              [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+              [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+              [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112)
+            : "memory", "t0", "v16", "v17", "v18", "v19", "v20", "v21",
+              "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29",
+              "v30", "v31");
+    } else {
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vmv.v.i      v16, 0                         \n\t"
+            "vmv.v.i      v18, 0                         \n\t"
+            "vmv.v.i      v20, 0                         \n\t"
+            "vmv.v.i      v22, 0                         \n\t"
+            "vmv.v.i      v24, 0                         \n\t"
+            "vmv.v.i      v26, 0                         \n\t"
+            "vmv.v.i      v28, 0                         \n\t"
+            "vmv.v.i      v30, 0                         \n\t"
+            :
+            :
+            : "t0", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
     }
+
+    for (int k1 = 0; k1 < K1; k1++) {
+        const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
+        const int8_t *A1 = lhs + k1 * (M0_T * IME_K0) + 1 * IME_M_ATOM * IME_K0;
+        const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
+        const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
+        const int8_t *B2 = rhs + k1 * (N0_T * IME_K0) + 2 * IME_N_ATOM * IME_K0;
+        const int8_t *B3 = rhs + k1 * (N0_T * IME_K0) + 3 * IME_N_ATOM * IME_K0;
+
+        __asm__ volatile(
+            "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
+            "vle8.v       v0, (%[A0])                    \n\t"
+            "vle8.v       v2, (%[A1])                    \n\t"
+            "vle8.v       v4, (%[B0])                    \n\t"
+            "vle8.v       v6, (%[B1])                    \n\t"
+            "vle8.v       v8, (%[B2])                    \n\t"
+            "vle8.v       v10, (%[B3])                   \n\t"
+            "smt.vmadot   v16, v0, v4                    \n\t"
+            "smt.vmadot   v18, v0, v6                    \n\t"
+            "smt.vmadot   v20, v0, v8                    \n\t"
+            "smt.vmadot   v22, v0, v10                   \n\t"
+            "smt.vmadot   v24, v2, v4                    \n\t"
+            "smt.vmadot   v26, v2, v6                    \n\t"
+            "smt.vmadot   v28, v2, v8                    \n\t"
+            "smt.vmadot   v30, v2, v10                   \n\t"
+            :
+            : [A0] "r"(A0), [A1] "r"(A1),
+              [B0] "r"(B0), [B1] "r"(B1), [B2] "r"(B2), [B3] "r"(B3)
+            : "memory", "t0",
+              "v0", "v2", "v4", "v6", "v8", "v10",
+              "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    __asm__ volatile(
+        "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+        "vse32.v      v16, (%[s0])                   \n\t"
+        "vse32.v      v18, (%[s1])                   \n\t"
+        "vse32.v      v20, (%[s2])                   \n\t"
+        "vse32.v      v22, (%[s3])                   \n\t"
+        "vse32.v      v24, (%[s4])                   \n\t"
+        "vse32.v      v26, (%[s5])                   \n\t"
+        "vse32.v      v28, (%[s6])                   \n\t"
+        "vse32.v      v30, (%[s7])                   \n\t"
+        :
+        : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+          [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+          [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+          [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112)
+        : "memory", "t0");
+    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+}
+
+// ===========================================================================
+// 16x8x8 — grid 4 x 2 (4 M-atoms, 2 N-atoms)
+//   A atoms: v0, v2, v4, v6
+//   B atoms: v8, v10
+//   acc    : 8 pairs {v16,v18,v20,v22,v24,v26,v28,v30}
+//     mt=0: A0 * {B0,B1} -> v16 v18
+//     mt=1: A1 * {B0,B1} -> v20 v22
+//     mt=2: A2 * {B0,B1} -> v24 v26
+//     mt=3: A3 * {B0,B1} -> v28 v30
+// ===========================================================================
+void iree_uk_mmt4d_tile_s8s8s32_16x8x8_ime(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1)
+{
+    (void)M0;
+    (void)K0;
+    enum { MT = 4, NT = 2, M0_T = 16, N0_T = 8 };
+    int32_t acc_scratch[MT * NT * 16];
+
+    if (flags & 1) {
+        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vle32.v      v16, (%[s0])                   \n\t"
+            "vle32.v      v18, (%[s1])                   \n\t"
+            "vle32.v      v20, (%[s2])                   \n\t"
+            "vle32.v      v22, (%[s3])                   \n\t"
+            "vle32.v      v24, (%[s4])                   \n\t"
+            "vle32.v      v26, (%[s5])                   \n\t"
+            "vle32.v      v28, (%[s6])                   \n\t"
+            "vle32.v      v30, (%[s7])                   \n\t"
+            :
+            : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+              [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+              [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+              [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112)
+            : "memory", "t0", "v16", "v17", "v18", "v19", "v20", "v21",
+              "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29",
+              "v30", "v31");
+    } else {
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vmv.v.i      v16, 0                         \n\t"
+            "vmv.v.i      v18, 0                         \n\t"
+            "vmv.v.i      v20, 0                         \n\t"
+            "vmv.v.i      v22, 0                         \n\t"
+            "vmv.v.i      v24, 0                         \n\t"
+            "vmv.v.i      v26, 0                         \n\t"
+            "vmv.v.i      v28, 0                         \n\t"
+            "vmv.v.i      v30, 0                         \n\t"
+            :
+            :
+            : "t0", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    for (int k1 = 0; k1 < K1; k1++) {
+        const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
+        const int8_t *A1 = lhs + k1 * (M0_T * IME_K0) + 1 * IME_M_ATOM * IME_K0;
+        const int8_t *A2 = lhs + k1 * (M0_T * IME_K0) + 2 * IME_M_ATOM * IME_K0;
+        const int8_t *A3 = lhs + k1 * (M0_T * IME_K0) + 3 * IME_M_ATOM * IME_K0;
+        const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
+        const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
+
+        __asm__ volatile(
+            "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
+            "vle8.v       v0, (%[A0])                    \n\t"
+            "vle8.v       v2, (%[A1])                    \n\t"
+            "vle8.v       v4, (%[A2])                    \n\t"
+            "vle8.v       v6, (%[A3])                    \n\t"
+            "vle8.v       v8, (%[B0])                    \n\t"
+            "vle8.v       v10, (%[B1])                   \n\t"
+            "smt.vmadot   v16, v0, v8                    \n\t"
+            "smt.vmadot   v18, v0, v10                   \n\t"
+            "smt.vmadot   v20, v2, v8                    \n\t"
+            "smt.vmadot   v22, v2, v10                   \n\t"
+            "smt.vmadot   v24, v4, v8                    \n\t"
+            "smt.vmadot   v26, v4, v10                   \n\t"
+            "smt.vmadot   v28, v6, v8                    \n\t"
+            "smt.vmadot   v30, v6, v10                   \n\t"
+            :
+            : [A0] "r"(A0), [A1] "r"(A1), [A2] "r"(A2), [A3] "r"(A3),
+              [B0] "r"(B0), [B1] "r"(B1)
+            : "memory", "t0",
+              "v0", "v2", "v4", "v6", "v8", "v10",
+              "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    __asm__ volatile(
+        "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+        "vse32.v      v16, (%[s0])                   \n\t"
+        "vse32.v      v18, (%[s1])                   \n\t"
+        "vse32.v      v20, (%[s2])                   \n\t"
+        "vse32.v      v22, (%[s3])                   \n\t"
+        "vse32.v      v24, (%[s4])                   \n\t"
+        "vse32.v      v26, (%[s5])                   \n\t"
+        "vse32.v      v28, (%[s6])                   \n\t"
+        "vse32.v      v30, (%[s7])                   \n\t"
+        :
+        : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+          [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+          [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+          [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112)
+        : "memory", "t0");
+    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
 }
 
 void iree_uk_mmt4d_tile_s8s8s32_4x4x8_ime(
@@ -405,7 +707,7 @@ void iree_uk_mmt4d_tile_s8s8s32_ime(
 void mmt4d_reference_s8s8s32(
     const int8_t  *lhs,    // [K1][M0][K0]
     const int8_t  *rhs,    // [K1][N0][K0]
-    int32_t       *out,    // [M0][N0], overwritten (no accumulate flag here)
+    int32_t       *out,    // [M0][N0]
     int32_t        M0,
     int32_t        N0,
     int32_t        K0,
