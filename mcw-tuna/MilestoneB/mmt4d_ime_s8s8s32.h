@@ -31,6 +31,27 @@ void iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime(
     const int8_t  *rhs,
     int32_t       *out,
     int32_t        M0,
+    int32_t        N0,
+    int32_t        K0,
+    int32_t        flags,
+    int32_t        K1);
+
+void iree_uk_mmt4d_tile_s8s8s32_4x4x8_ime(
+    const int8_t  *lhs,   // [K1][M0][K0]
+    const int8_t  *rhs,   // [K1][N0][K0]
+    int32_t       *out,   // [M0][N0]
+    int32_t        M0,
+    int32_t        N0,
+    int32_t        K0,
+    int32_t        flags,
+    int32_t        K1);
+
+void iree_uk_mmt4d_tile_s8s8s32_ime(
+    const int8_t  *lhs,   // [K1][M0][K0]
+    const int8_t  *rhs,   // [K1][N0][K0]
+    int32_t       *out,   // [M0][N0]
+    int32_t        M0,
+    int32_t        N0,
     int32_t        K0,
     int32_t        flags,
     int32_t        K1);
