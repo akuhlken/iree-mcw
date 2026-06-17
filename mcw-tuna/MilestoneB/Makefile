@@ -1,4 +1,4 @@
-# Makefile — Milestone B: standalone IME microkernel + validation
+# Makefile — Milestone B: standalone IME microkernels + validation + benchmark
 #
 # Usage (on BPI-F3, cross-compile, or QEMU):
 #
@@ -12,36 +12,56 @@
 #   make CC=/path/to/iree/third_party/llvm-project/build/bin/clang \
 #        CROSS_FLAGS="-target riscv64-linux-gnu --gcc-toolchain=/opt/riscv"
 #
-# Run validator (pin to Cluster-0 cores that have the IME unit):
+# Targets:
+#   make            -> build validator (mmt4d_ime_validate)
+#   make benchmark  -> build benchmark (mmt4d_ime_benchmark)
+#   make run        -> run validator pinned to Cluster-0
+#   make run-bench  -> run benchmark pinned to Cluster-0
+#
+# Run pinned to Cluster-0 cores that have the IME unit:
 #   taskset -c 0-3 ./mmt4d_ime_validate
+#   taskset -c 0-3 ./mmt4d_ime_benchmark
 #
 # NOTES:
 #   * -march must include 'v' (RVV 1.0) and 'xsmtvdot' (IME extension).
 #   * If your assembler predates LLVM 20 and does not recognise 'smt.vmadot',
 #     compile with -DIME_USE_DOT_INSN and the .insn encoding in the .c file
 #     will be used instead.
-#   * The validator links the kernel and reference into a single binary;
-#     it does NOT use IREE's build system.  The same kernel file will later
-#     be compiled into IREE's ukernel bitcode by the IREE CMake/Bazel build.
+#   * These harnesses link the kernels directly; they do NOT use IREE's build
+#     system. The same kernel file will later be compiled into IREE's ukernel
+#     bitcode by the IREE CMake/Bazel build.
 
-CC       ?= riscv64-unknown-linux-gnu-gcc
-MARCH    ?= rv64gcv_xsmtvdot
-CFLAGS   ?= -O2 -march=$(MARCH) -Wall -Wextra
-CROSS_FLAGS ?= 
+CC          ?= riscv64-unknown-linux-gnu-gcc
+MARCH       ?= rv64gcv_xsmtvdot
+CFLAGS      ?= -O2 -march=$(MARCH) -Wall -Wextra
+CROSS_FLAGS ?=
 
+KERNEL_SRC   = mmt4d_ime_s8s8s32.c
+HEADER       = mmt4d_ime_s8s8s32.h
 
-SRCS = mmt4d_ime_s8s8s32.c mmt4d_ime_validate.c
-TARGET = mmt4d_ime_validate
+VALIDATE_SRCS  = $(KERNEL_SRC) mmt4d_ime_validate.c
+VALIDATE_BIN   = mmt4d_ime_validate
 
-.PHONY: all clean run
+BENCH_SRCS     = $(KERNEL_SRC) mmt4d_ime_benchmark.c
+BENCH_BIN      = mmt4d_ime_benchmark
 
-all: $(TARGET)
+.PHONY: all benchmark clean run run-bench
 
-$(TARGET): $(SRCS) mmt4d_ime_s8s8s32.h
-	$(CC) $(CFLAGS) $(CROSS_FLAGS) -o $@ $(SRCS)
+all: $(VALIDATE_BIN)
 
-run: $(TARGET)
-	taskset -c 0-3 ./$(TARGET)
+benchmark: $(BENCH_BIN)
+
+$(VALIDATE_BIN): $(VALIDATE_SRCS) $(HEADER)
+	$(CC) $(CFLAGS) $(CROSS_FLAGS) -o $@ $(VALIDATE_SRCS)
+
+$(BENCH_BIN): $(BENCH_SRCS) $(HEADER)
+	$(CC) $(CFLAGS) $(CROSS_FLAGS) -o $@ $(BENCH_SRCS)
+
+run: $(VALIDATE_BIN)
+	taskset -c 0-3 ./$(VALIDATE_BIN)
+
+run-bench: $(BENCH_BIN)
+	taskset -c 0-3 ./$(BENCH_BIN)
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(VALIDATE_BIN) $(BENCH_BIN)

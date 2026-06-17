@@ -1,39 +1,67 @@
 // mmt4d_ime_s8s8s32.h
 //
-// Public interface for the standalone IME microkernel and scalar reference.
-// Include this in the validation harness (mmt4d_ime_validate.c).
+// Public interface for the standalone IME microkernels and scalar reference.
+// Include this in the validation harness (mmt4d_ime_validate.c) and the
+// benchmark harness (mmt4d_ime_benchmark.c).
 
 #ifndef MMT4D_IME_S8S8S32_H_
 #define MMT4D_IME_S8S8S32_H_
 
 #include <stdint.h>
 
-// Fixed macro-tile geometry for the A60 IME path (VLEN=256, lambda=2, W=4).
-// One vmadot call covers a 4x4x8 (M x N x K) int8->int32 tile.
-// The chosen macro-tile is 8x8x8 (two atoms in M and N, one atom in K).
-#define IME_M0   8
-#define IME_N0   8
-#define IME_K0   8
+// ---------------------------------------------------------------------------
+// Atomic IME tile geometry for the A60 IME path (VLEN=256, lambda=2, W=4).
+// One vmadot call covers a 4x4x8 (M x N x K) int8->int32 tile (the "atom").
+// All supported macro-tiles are integer multiples of this atom in M and N,
+// with a fixed K0 = 8 (one atom deep).
+// ---------------------------------------------------------------------------
+#define IME_M_ATOM  4
+#define IME_N_ATOM  4
+#define IME_K_ATOM  8
+#define IME_K0      8
 
 // ---------------------------------------------------------------------------
-// IME microkernel — mmt4d tile function.
+// IME microkernels — mmt4d tile functions.
 //
-//   lhs   : int8_t  [K1][M0][K0]  — LHS panels
+// Every kernel shares this signature (mirrors IREE's iree_uk_mmt4d_tile_func_t
+// minus the bundled params struct):
+//
+//   lhs   : int8_t  [K1][M0][K0]  — LHS panels (row-major, K0-contiguous)
 //   rhs   : int8_t  [K1][N0][K0]  — RHS panels (B column-major per mmt4d)
 //   out   : int32_t [M0][N0]      — accumulator tile, row-major
-//   M0    : must == IME_M0 (8)
+//   M0    : tile M0 (informational; fixed per kernel)
 //   K0    : must == IME_K0 (8)
 //   flags : bit 0 = 1 → accumulate into out; 0 → overwrite out
 //   K1    : reduction panel count (>= 1)
+//
+// N0 is fixed per kernel by its name (the SxMxNxK suffix is M0 x N0 x K0).
 // ---------------------------------------------------------------------------
-void iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime(
-    const int8_t  *lhs,
-    const int8_t  *rhs,
-    int32_t       *out,
-    int32_t        M0,
-    int32_t        K0,
-    int32_t        flags,
-    int32_t        K1);
+#define IME_TILE_DECL(name)                              \
+    void name(const int8_t *lhs, const int8_t *rhs,      \
+              int32_t *out, int32_t M0, int32_t K0,      \
+              int32_t flags, int32_t K1)
+
+IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_4x8x8_ime);
+IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_8x4x8_ime);
+IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime);
+IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_8x16x8_ime);
+IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_16x8x8_ime);
+
+// ---------------------------------------------------------------------------
+// Shared kernel descriptor used by the validate / benchmark harnesses to
+// iterate over all shapes uniformly.
+// ---------------------------------------------------------------------------
+typedef void (*iree_uk_mmt4d_tile_func_t)(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1);
+
+typedef struct {
+    const char               *name;
+    iree_uk_mmt4d_tile_func_t fn;
+    int                       M0;
+    int                       N0;
+    int                       K0;
+} ime_kernel_desc_t;
 
 // ---------------------------------------------------------------------------
 // Scalar reference kernel — identical semantics, pure C.
