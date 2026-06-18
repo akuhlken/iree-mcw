@@ -44,7 +44,7 @@ static const ime_kernel_desc_t kKernels[] = {
 #define NUM_KERNELS (int)(sizeof(kKernels) / sizeof(kKernels[0]))
 
 // Benchmark configuration.
-#define BENCH_K1     1024   // reduction depth per call (cache-resident panels)
+// #define BENCH_K1     1024   // reduction depth per call (cache-resident panels)
 #define BENCH_ITERS  20000  // tile-function calls per measured run
 #define WARMUP_ITERS 1000
 
@@ -65,12 +65,12 @@ static void fill_random_s8(int8_t *buf, size_t n, unsigned *seed)
 }
 
 // ---------------------------------------------------------------------------
-static void bench_kernel(const ime_kernel_desc_t *k)
+static void bench_kernel(const ime_kernel_desc_t *k, const int K1)
 {
     const int M0 = k->M0;
     const int N0 = k->N0;
     const int K0 = k->K0;
-    const int K1 = BENCH_K1;
+    // const int K1 = BENCH_K1;
 
     int8_t  *lhs = malloc((size_t)K1 * M0 * K0);
     int8_t  *rhs = malloc((size_t)K1 * N0 * K0);
@@ -124,14 +124,16 @@ static void bench_kernel(const ime_kernel_desc_t *k)
 // ---------------------------------------------------------------------------
 int main(void)
 {
-    printf("IME mmt4d kernel benchmark (K1=%d, iters=%d)\n",
-           BENCH_K1, BENCH_ITERS);
+    printf("IME mmt4d kernel benchmark (iters=%d)\n", BENCH_ITERS);
     printf("Pin to Cluster-0 for valid numbers: taskset -c 0-3 ./mmt4d_ime_benchmark\n\n");
     printf("%-22s %-8s %-9s %12s  %12s\n",
            "kernel", "shape", "depth", "us/call", "GOP/s");
 
-    for (int i = 0; i < NUM_KERNELS; i++)
-        bench_kernel(&kKernels[i]);
-
+    // int K1s[] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+    int K1s[] = {1024};
+    for (int x = 0; x < (int)(sizeof K1s / sizeof K1s[0]); x++) {
+        for (int i = 0; i < NUM_KERNELS; i++)
+            bench_kernel(&kKernels[i], K1s[x]);
+    }
     return 0;
 }

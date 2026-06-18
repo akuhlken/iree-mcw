@@ -170,7 +170,7 @@ void iree_uk_mmt4d_tile_s8s8s32_4x8x8_ime(
         const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
         const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
         const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
-        printf("k1 = %d, A0 = %d, B0 = %d, B1 = %d\n", k1, *A0, *B0, *B1);
+        // printf("k1 = %d, A0 = %d, B0 = %d, B1 = %d\n", k1, *A0, *B0, *B1);
 
         __asm__ volatile(
             "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
@@ -400,7 +400,7 @@ void iree_uk_mmt4d_tile_s8s8s32_8x16x8_ime(
         const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
         const int8_t *B2 = rhs + k1 * (N0_T * IME_K0) + 2 * IME_N_ATOM * IME_K0;
         const int8_t *B3 = rhs + k1 * (N0_T * IME_K0) + 3 * IME_N_ATOM * IME_K0;
-        printf("k1 = %d, A0 = %d, B0 = %d, B1 = %d\n", k1, *A0, *B0, *B1);
+        // printf("k1 = %d, A0 = %d, A1 = %d, B0 = %d, B1 = %d, B2 = %d, B3 = %d\n", k1, *A0, *A1, *B0, *B1, *B2, *B3);
 
 
         __asm__ volatile(
