@@ -51,24 +51,20 @@ static const ime_kernel_desc_t kKernels[] = {
 
 static void fill_random_s8(int8_t *buf, size_t n, unsigned *seed)
 {
-    // for (size_t i = 0; i < n; i++) {
-    //     // rand_r produces values in [0, RAND_MAX]; map to [-64, 63] to avoid
-    //     // overflow concerns in spot checks, while still exercising sign paths.
-    //     int v = (int)(rand_r(seed) % 128) - 64;
-    //     buf[i] = (int8_t)v;
-    // }
-
     for (size_t i = 0; i < n; i++) {
-        buf[i] = (int8_t)(i);
-        printf("%d, ",buf[i]);
+        // rand_r produces values in [0, RAND_MAX]; map to [-64, 63] to avoid
+        // overflow concerns in spot checks, while still exercising sign paths.
+        // int v = (int)(rand_r(seed) % 128) - 64;
+        int v = i;
+        printf("%d,", v);
+        buf[i] = (int8_t)v;
     }
-    // printf("\n");
 }
 
-// static void fill_constant_s8(int8_t *buf, size_t n, int8_t val)
-// {
-//     for (size_t i = 0; i < n; i++) buf[i] = val;
-// }
+static void fill_constant_s8(int8_t *buf, size_t n, int8_t val)
+{
+    for (size_t i = 0; i < n; i++) buf[i] = val;
+}
 
 // Compare IME output vs reference; print differences and return 0 on mismatch.
 static int compare_s32(
@@ -103,9 +99,6 @@ static int run_test(
     const int8_t  *lhs,    // [K1][M0][K0]
     const int8_t  *rhs,    // [K1][N0][K0]
     const int32_t *c_init, // [M0][N0] initial accumulator (NULL = zero)
-    int32_t        M0,
-    int32_t        N0,
-    int32_t        K0,
     int32_t        K1,
     int32_t        flags)
 {
@@ -136,7 +129,7 @@ static int run_test(
     snprintf(label, sizeof label, "%s %s", k->name, case_label);
 
     int ok = compare_s32(got, want, M0, N0, label);
-    // if (ok) printf("[PASS] %s\n", label);
+    if (ok) printf("[PASS] %s\n", label);
     return ok;
 }
 
@@ -273,13 +266,82 @@ int main(void)
 {
     int total = 0, passed = 0;
 
-    for (int i = 0; i < NUM_KERNELS; i++) {
-        printf("=== %s (%dx%dx%d) ===\n",
-               kKernels[i].name, kKernels[i].M0, kKernels[i].N0, kKernels[i].K0);
-        run_suite(&kKernels[i], &total, &passed);
+    // for (int i = 0; i < NUM_KERNELS; i++) {
+    //     printf("=== %s (%dx%dx%d) ===\n",
+    //            kKernels[i].name, kKernels[i].M0, kKernels[i].N0, kKernels[i].K0);
+    //     run_suite(&kKernels[i], &total, &passed);
+    // }
+    // printf("=== %s (%dx%dx%d) ===\n",
+    //         kKernels[0].name, kKernels[0].M0, kKernels[0].N0, kKernels[0].K0);
+    // run_suite(&kKernels[0], &total, &passed);
+
+    // sample test
+
+    struct timespec start, end;
+    int8_t  lhs_buf[K1_MAX * MAX_M0 * MAX_K0];
+    int8_t  rhs_buf[K1_MAX * MAX_N0 * MAX_K0];
+
+    {
+        // 4x8x8 k1=2
+        int K1 = 1;
+        int M0 = 4;
+        int N0 = 8;
+        int K0 = 8;
+        unsigned seed = 1;
+        fill_random_s8(lhs_buf, (size_t)(K1 * M0 * K0), &seed);
+        printf("\n\n");
+        fill_random_s8(rhs_buf, (size_t)(K1 * N0 * K0), &seed);
+        printf("\n");
+
+        char label[64];
+        snprintf(label, sizeof label, "K1=%d", K1);
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        run_test(&kKernels[0], label, lhs_buf, rhs_buf, NULL, K1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
     }
 
-    printf("\n%d / %d tests passed.\n", passed, total);
-    
-    return 1;
+    {
+        // 4x8x8 k1=2
+        int K1 = 2;
+        int M0 = 4;
+        int N0 = 8;
+        int K0 = 8;
+        unsigned seed = 1;
+        fill_random_s8(lhs_buf, (size_t)(K1 * M0 * K0), &seed);
+        printf("\n\n");
+        fill_random_s8(rhs_buf, (size_t)(K1 * N0 * K0), &seed);
+        printf("\n");
+
+        char label[64];
+        snprintf(label, sizeof label, "K1=%d", K1);
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        run_test(&kKernels[0], label, lhs_buf, rhs_buf, NULL, K1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
+    }
+
+    {
+        // 8x16x8 k1=1
+        int K1 = 1;
+        int M0 = 8;
+        int N0 = 16;
+        int K0 = 8;
+        unsigned seed = 1;
+        fill_random_s8(lhs_buf, (size_t)(K1 * M0 * K0), &seed);
+        printf("\n\n");
+        fill_random_s8(rhs_buf, (size_t)(K1 * N0 * K0), &seed);
+        printf("\n");
+
+        char label[64];
+        snprintf(label, sizeof label, "K1=%d", K1);
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        run_test(&kKernels[3], label, lhs_buf, rhs_buf, NULL, K1, 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        printf("Kernel runtime: %f seconds\n\n", get_time_diff(start, end));
+    }
+
+
+    // printf("\n%d / %d tests passed.\n", passed, total);
+    return (passed == total) ? 0 : 1;
 }
