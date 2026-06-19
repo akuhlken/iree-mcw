@@ -1046,12 +1046,21 @@ enumerateMatmulTileRiscv64(TypeRange elementTypes, DictionaryAttr config) {
   if (lhs.isSignlessInteger(8) && rhs.isSignlessInteger(8) &&
       out.isSignlessInteger(32)) {
     int N0 = vlen / 8;
-    return {
-        TileMxNxK{7, N0, 1}, // Primary shape for RVV widening int8 kernels.
-        TileMxNxK{4, N0, 1}, // Truncation of the above.
-        TileMxNxK{2, N0, 1}, // Truncation of the above.
-        TileMxNxK{1, N0, 1}, // Truncation of the above.
-    };
+    if (hasFeature(config, "+xsmtvdot")) {
+        N0 = 16;
+      return {
+          TileMxNxK{8, N0, 1},
+          TileMxNxK{4, N0, 1}, // Truncation of the above.
+      };
+    }
+    else {
+        return {
+            TileMxNxK{7, N0, 1}, // Primary shape for RVV widening int8 kernels.
+            TileMxNxK{4, N0, 1}, // Truncation of the above.
+            TileMxNxK{2, N0, 1}, // Truncation of the above.
+            TileMxNxK{1, N0, 1}, // Truncation of the above.
+        };
+    }
   }
   // Fallback - no architecture-optimized tile size for this case.
   return {};
