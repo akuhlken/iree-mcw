@@ -1049,8 +1049,7 @@ enumerateMatmulTileRiscv64(TypeRange elementTypes, DictionaryAttr config) {
     if (hasFeature(config, "+xsmtvdot")) {
         N0 = 16;
       return {
-          TileMxNxK{8, N0, 1},
-          TileMxNxK{4, N0, 1}, // Truncation of the above.
+          TileMxNxK{8, N0, 8}
       };
     }
     else {
