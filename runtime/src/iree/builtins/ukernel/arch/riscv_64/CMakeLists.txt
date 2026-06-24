@@ -90,6 +90,25 @@ iree_bitcode_library(
     "-march=rv64gc_zvfh"
 )
 
+iree_bitcode_library(
+  NAME
+    ukernel_bitcode_arch_riscv_64_xsmtvdot
+  ARCH
+    riscv_64
+  INTERNAL_HDRS
+    "${PROJECT_BINARY_DIR}/runtime/src/iree/builtins/ukernel/internal_headers_filegroup.stamp"
+    "${PROJECT_BINARY_DIR}/runtime/src/iree/schemas/cpu_data_headers_filegroup.stamp"
+    "common_riscv_64.h"
+    "mmt4d_riscv_64_internal.h"
+    "mmt4d_riscv_64_tiles.inl"
+    "pack_riscv_64_internal.h"
+    "unpack_riscv_64_internal.h"
+  SRCS
+    "mmt4d_riscv_64_xsmtvdot.c"
+  COPTS
+    "-march=rv64gc_xsmtvdot"
+)
+
 iree_link_bitcode(
   NAME
     ukernel_bitcode_arch_riscv_64
@@ -214,6 +233,20 @@ iree_cc_library(
 )
 list(APPEND IREE_UK_RISCV_64_DEPS "::riscv_64_zvfh")
 endif()  # IREE_UK_BUILD_RISCV_64_ZVFH
+
+if(IREE_UK_BUILD_RISCV_64_XSMTVDOT)
+iree_cc_library(
+  NAME
+    riscv_64_xsmtvdot
+  SRCS
+    "mmt4d_riscv_64_xsmtvdot.c"
+  COPTS
+    "${IREE_UK_COPTS_RISCV_64_XSMTVDOT}"
+  DEPS
+    iree::builtins::ukernel::internal_headers
+)
+list(APPEND IREE_UK_RISCV_64_DEPS "::riscv_64_xsmtvdot")
+endif()  # IREE_UK_BUILD_RISCV_64_XSMTVDOT
 
 iree_cc_library(
   NAME

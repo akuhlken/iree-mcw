@@ -170,6 +170,7 @@ void iree_uk_mmt4d_tile_s8s8s32_4x8x8_ime(
         const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
         const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
         const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
+        // printf("k1 = %d, A0 = %d, B0 = %d, B1 = %d\n", k1, *A0, *B0, *B1);
 
         __asm__ volatile(
             "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
@@ -278,25 +279,25 @@ void iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime(
             // "keep-vl" form leaves vtype illegal on a fresh context and
             // traps the next vector op (SIGILL) on the SpaceMiT X60.
             "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
-            "vle32.v      v16, (%[s0])                   \n\t"
-            "vle32.v      v18, (%[s1])                   \n\t"
-            "vle32.v      v20, (%[s2])                   \n\t"
-            "vle32.v      v22, (%[s3])                   \n\t"
+            "vle32.v      v6, (%[s0])                   \n\t"
+            "vle32.v      v8, (%[s1])                   \n\t"
+            "vle32.v      v10, (%[s2])                   \n\t"
+            "vle32.v      v12, (%[s3])                   \n\t"
             :
             : [s0] "r"(acc_scratch + 0),  [s1] "r"(acc_scratch + 16),
               [s2] "r"(acc_scratch + 32), [s3] "r"(acc_scratch + 48)
-            : "memory", "t0", "v16", "v17", "v18", "v19",
+            : "memory", "t0", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19",
                          "v20", "v21", "v22", "v23");
     } else {
         __asm__ volatile(
             "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
-            "vmv.v.i      v16, 0                         \n\t"
-            "vmv.v.i      v18, 0                         \n\t"
-            "vmv.v.i      v20, 0                         \n\t"
-            "vmv.v.i      v22, 0                         \n\t"
+            "vmv.v.i      v6, 0                         \n\t"
+            "vmv.v.i      v8, 0                         \n\t"
+            "vmv.v.i      v10, 0                         \n\t"
+            "vmv.v.i      v12, 0                         \n\t"
             :
             :
-            : "t0", "v16", "v17", "v18", "v19",
+            : "t0", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19",
               "v20", "v21", "v22", "v23");
     }
 
@@ -312,25 +313,25 @@ void iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime(
             "vle8.v       v2, (%[A1])                    \n\t"
             "vle8.v       v1, (%[B0])                    \n\t"
             "vle8.v       v3, (%[B1])                    \n\t"
-            "smt.vmadot   v16, v0, v1                    \n\t"
-            "smt.vmadot   v18, v0, v3                    \n\t"
-            "smt.vmadot   v20, v2, v1                    \n\t"
-            "smt.vmadot   v22, v2, v3                    \n\t"
+            "smt.vmadot   v6, v0, v1                    \n\t"
+            "smt.vmadot   v8, v0, v3                    \n\t"
+            "smt.vmadot   v10, v2, v1                    \n\t"
+            "smt.vmadot   v12, v2, v3                    \n\t"
             :
             : [A0] "r"(A0), [A1] "r"(A1),
               [B0] "r"(B0), [B1] "r"(B1)
             : "memory", "t0",
-              "v0", "v1", "v2", "v3",
+              "v0", "v1", "v2", "v3", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", 
               "v16", "v17", "v18", "v19",
               "v20", "v21", "v22", "v23");
     }
 
     __asm__ volatile(
         "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
-        "vse32.v      v16, (%[s0])                   \n\t"
-        "vse32.v      v18, (%[s1])                   \n\t"
-        "vse32.v      v20, (%[s2])                   \n\t"
-        "vse32.v      v22, (%[s3])                   \n\t"
+        "vse32.v      v6, (%[s0])                   \n\t"
+        "vse32.v      v8, (%[s1])                   \n\t"
+        "vse32.v      v10, (%[s2])                   \n\t"
+        "vse32.v      v12, (%[s3])                   \n\t"
         :
         : [s0] "r"(acc_scratch + 0),  [s1] "r"(acc_scratch + 16),
           [s2] "r"(acc_scratch + 32), [s3] "r"(acc_scratch + 48)
@@ -356,6 +357,7 @@ void iree_uk_mmt4d_tile_s8s8s32_8x16x8_ime(
     int32_t acc_scratch[MT * NT * 16];
 
     if (flags & 1) {
+
         ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
         __asm__ volatile(
             "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
@@ -399,6 +401,8 @@ void iree_uk_mmt4d_tile_s8s8s32_8x16x8_ime(
         const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
         const int8_t *B2 = rhs + k1 * (N0_T * IME_K0) + 2 * IME_N_ATOM * IME_K0;
         const int8_t *B3 = rhs + k1 * (N0_T * IME_K0) + 3 * IME_N_ATOM * IME_K0;
+        // printf("k1 = %d, A0 = %d, A1 = %d, B0 = %d, B1 = %d, B2 = %d, B3 = %d\n", k1, *A0, *A1, *B0, *B1, *B2, *B3);
+
 
         __asm__ volatile(
             "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
@@ -552,6 +556,388 @@ void iree_uk_mmt4d_tile_s8s8s32_16x8x8_ime(
     ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
 }
 
+// ===========================================================================
+// 12x12x8 — grid 3 x 3 (3 M-atoms, 3 N-atoms)
+//   A atoms: v0, v2, v4
+//   B atoms: v6, v8, v10
+//   acc    : 9 pairs {v12,v14,v16,v18,v20,v22,v24,v26,v28}
+//     row mt=0: A0 * {B0,B1,B2,B3} -> v16 v18 v20
+//     row mt=1: A1 * {B0,B1,B2,B3} -> v22 v24 v26
+//     row mt=2: A2 * {B0,B1,B2,B3} -> v28 v30 v32
+// ===========================================================================
+void iree_uk_mmt4d_tile_s8s8s32_12x12x8_ime(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1)
+{
+    (void)M0;
+    (void)K0;
+    enum { MT = 3, NT = 3, M0_T = 12, N0_T = 12 };
+    int32_t acc_scratch[MT * NT * 16];
+
+    if (flags & 1) {
+
+        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma        \n\t"
+            "vle32.v      v12, (%[s0])                   \n\t"
+            "vle32.v      v14, (%[s1])                   \n\t"
+            "vle32.v      v16, (%[s2])                   \n\t"
+            "vle32.v      v18, (%[s3])                   \n\t"
+            "vle32.v      v20, (%[s4])                   \n\t"
+            "vle32.v      v22, (%[s5])                   \n\t"
+            "vle32.v      v24, (%[s6])                   \n\t"
+            "vle32.v      v26, (%[s7])                   \n\t"
+            "vle32.v      v28, (%[s8])                   \n\t"
+            :
+            : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+              [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+              [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+              [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112),
+              [s8] "r"(acc_scratch + 128)
+            : "memory", "t0", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21",
+              "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29",
+              "v30", "v31");
+    } else {
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vmv.v.i      v12, 0                         \n\t"
+            "vmv.v.i      v14, 0                         \n\t"
+            "vmv.v.i      v16, 0                         \n\t"
+            "vmv.v.i      v18, 0                         \n\t"
+            "vmv.v.i      v20, 0                         \n\t"
+            "vmv.v.i      v22, 0                         \n\t"
+            "vmv.v.i      v24, 0                         \n\t"
+            "vmv.v.i      v26, 0                         \n\t"
+            "vmv.v.i      v28, 0                         \n\t"
+            :
+            :
+            : "t0",  "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    for (int k1 = 0; k1 < K1; k1++) {
+        const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
+        const int8_t *A1 = lhs + k1 * (M0_T * IME_K0) + 1 * IME_M_ATOM * IME_K0;
+        const int8_t *A2 = lhs + k1 * (M0_T * IME_K0) + 2 * IME_M_ATOM * IME_K0;
+        const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
+        const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
+        const int8_t *B2 = rhs + k1 * (N0_T * IME_K0) + 2 * IME_N_ATOM * IME_K0;
+        // printf("k1 = %d, A0 = %d, A1 = %d, B0 = %d, B1 = %d, B2 = %d, B3 = %d\n", k1, *A0, *A1, *B0, *B1, *B2, *B3);
+
+
+        __asm__ volatile(
+            "vsetvli      t0, x0, e8, m1, ta, ma         \n\t"
+            "vle8.v       v0, (%[A0])                    \n\t"
+            "vle8.v       v2, (%[A1])                    \n\t"
+            "vle8.v       v4, (%[A2])                    \n\t"
+            "vle8.v       v6, (%[B0])                    \n\t"
+            "vle8.v       v8, (%[B1])                    \n\t"
+            "vle8.v       v10, (%[B2])                   \n\t"
+            "smt.vmadot   v12, v0, v6                    \n\t"
+            "smt.vmadot   v14, v0, v8                    \n\t"
+            "smt.vmadot   v16, v0, v10                   \n\t"
+            "smt.vmadot   v18, v2, v6                    \n\t"
+            "smt.vmadot   v20, v2, v8                    \n\t"
+            "smt.vmadot   v22, v2, v10                   \n\t"
+            "smt.vmadot   v24, v4, v6                    \n\t"
+            "smt.vmadot   v26, v4, v8                    \n\t"
+            "smt.vmadot   v28, v4, v10                   \n\t"
+            :
+            : [A0] "r"(A0), [A1] "r"(A1), [A2] "r"(A2),
+              [B0] "r"(B0), [B1] "r"(B1), [B2] "r"(B2)
+            : "memory", "t0",
+              "v0", "v2", "v4", "v6", "v8", "v10", "v12", "v13", "v14", "v15", 
+              "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    __asm__ volatile(
+        "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+        "vse32.v      v12, (%[s0])                   \n\t"
+        "vse32.v      v14, (%[s1])                   \n\t"
+        "vse32.v      v16, (%[s2])                   \n\t"
+        "vse32.v      v18, (%[s3])                   \n\t"
+        "vse32.v      v20, (%[s4])                   \n\t"
+        "vse32.v      v22, (%[s5])                   \n\t"
+        "vse32.v      v24, (%[s6])                   \n\t"
+        "vse32.v      v26, (%[s7])                   \n\t"
+        "vse32.v      v28, (%[s8])                   \n\t"
+        :
+        : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+          [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+          [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+          [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112),
+          [s8] "r"(acc_scratch + 128)
+        : "memory", "t0");
+    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+}
+
+// ===========================================================================
+// 12x16x8 — grid 3 x 4 (3 M-atoms, 4 N-atoms)
+//   A atoms: v0, v2, v4
+//   B atoms: v1, v3, v5, v6
+//   acc    : 12 pairs {v8,v10,v12,v14,v16,v18,v22,v24,v26,v28,v30}
+//     row mt=0: A0 * {B0,B1,B2,B3} -> v8  v10 v12 v14
+//     row mt=1: A1 * {B0,B1,B2,B3} -> v16 v18 v20 v22
+//     row mt=2: A2 * {B0,B1,B2,B3} -> v24 v26 v28 v30
+// ===========================================================================
+void iree_uk_mmt4d_tile_s8s8s32_12x16x8_ime(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1)
+{
+    (void)M0;
+    (void)K0;
+    enum { MT = 3, NT = 4, M0_T = 12, N0_T = 16 };
+    int32_t acc_scratch[MT * NT * 16];
+
+    if (flags & 1) {
+
+        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma        \n\t"
+            "vle32.v      v8, (%[s0])                    \n\t"
+            "vle32.v      v10, (%[s1])                   \n\t"
+            "vle32.v      v12, (%[s2])                   \n\t"
+            "vle32.v      v14, (%[s3])                   \n\t"
+            "vle32.v      v16, (%[s4])                   \n\t"
+            "vle32.v      v18, (%[s5])                   \n\t"
+            "vle32.v      v20, (%[s6])                   \n\t"
+            "vle32.v      v22, (%[s7])                   \n\t"
+            "vle32.v      v24, (%[s8])                   \n\t"
+            "vle32.v      v26, (%[s9])                   \n\t"
+            "vle32.v      v28, (%[s10])                  \n\t"
+            "vle32.v      v30, (%[s11])                  \n\t"
+            :
+            : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+              [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+              [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+              [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112),
+              [s8] "r"(acc_scratch + 128),  [s9] "r"(acc_scratch + 144),
+              [s10] "r"(acc_scratch + 160),  [s11] "r"(acc_scratch + 176)
+            : "memory", "t0", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21",
+              "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29",
+              "v30", "v31");
+    } else {
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vmv.v.i      v8, 0                         \n\t"
+            "vmv.v.i      v10, 0                         \n\t"
+            "vmv.v.i      v12, 0                         \n\t"
+            "vmv.v.i      v14, 0                         \n\t"
+            "vmv.v.i      v16, 0                         \n\t"
+            "vmv.v.i      v18, 0                         \n\t"
+            "vmv.v.i      v20, 0                         \n\t"
+            "vmv.v.i      v22, 0                         \n\t"
+            "vmv.v.i      v24, 0                         \n\t"
+            "vmv.v.i      v26, 0                         \n\t"
+            "vmv.v.i      v28, 0                         \n\t"
+            "vmv.v.i      v30, 0                         \n\t"
+            :
+            :
+            : "t0", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    for (int k1 = 0; k1 < K1; k1++) {
+        const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
+        const int8_t *A1 = lhs + k1 * (M0_T * IME_K0) + 1 * IME_M_ATOM * IME_K0;
+        const int8_t *A2 = lhs + k1 * (M0_T * IME_K0) + 2 * IME_M_ATOM * IME_K0;
+        const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
+        const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
+        const int8_t *B2 = rhs + k1 * (N0_T * IME_K0) + 2 * IME_N_ATOM * IME_K0;
+        const int8_t *B3 = rhs + k1 * (N0_T * IME_K0) + 3 * IME_N_ATOM * IME_K0;
+        // printf("k1 = %d, A0 = %d, A1 = %d, B0 = %d, B1 = %d, B2 = %d, B3 = %d\n", k1, *A0, *A1, *B0, *B1, *B2, *B3);
+
+
+        __asm__ volatile(
+            "vsetvli      t0, x0, e8, m1, ta, ma        \n\t"
+            "vle8.v       v0, (%[A0])                    \n\t"
+            "vle8.v       v2, (%[A1])                    \n\t"
+            "vle8.v       v4, (%[A2])                    \n\t"
+            "vle8.v       v1, (%[B0])                    \n\t"
+            "vle8.v       v3, (%[B1])                    \n\t"
+            "vle8.v       v5, (%[B2])                    \n\t"
+            "vle8.v       v6, (%[B3])                    \n\t"
+            "smt.vmadot   v8, v0, v1                     \n\t"
+            "smt.vmadot   v10, v0, v3                    \n\t"
+            "smt.vmadot   v12, v0, v5                    \n\t"
+            "smt.vmadot   v14, v0, v6                    \n\t"
+            "smt.vmadot   v16, v2, v1                    \n\t"
+            "smt.vmadot   v18, v2, v3                    \n\t"
+            "smt.vmadot   v20, v2, v5                    \n\t"
+            "smt.vmadot   v22, v2, v6                    \n\t"
+            "smt.vmadot   v24, v4, v1                    \n\t"
+            "smt.vmadot   v26, v4, v3                    \n\t"
+            "smt.vmadot   v28, v4, v5                    \n\t"
+            "smt.vmadot   v30, v4, v6                    \n\t"
+            :
+            : [A0] "r"(A0), [A1] "r"(A1), [A2] "r"(A2),
+              [B0] "r"(B0), [B1] "r"(B1), [B2] "r"(B2), [B3] "r"(B3)
+            : "memory", "t0",
+              "v0", "v2", "v4", "v6", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15",
+              "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    __asm__ volatile(
+        "vsetvli      t0, x0, e32, m2, ta, ma        \n\t"
+        "vse32.v      v8, (%[s0])                   \n\t"
+        "vse32.v      v10, (%[s1])                   \n\t"
+        "vse32.v      v12, (%[s2])                   \n\t"
+        "vse32.v      v14, (%[s3])                   \n\t"
+        "vse32.v      v16, (%[s4])                   \n\t"
+        "vse32.v      v18, (%[s5])                   \n\t"
+        "vse32.v      v20, (%[s6])                   \n\t"
+        "vse32.v      v22, (%[s7])                   \n\t"
+        "vse32.v      v24, (%[s8])                   \n\t"
+        "vse32.v      v26, (%[s9])                   \n\t"
+        "vse32.v      v28, (%[s10])                   \n\t"
+        "vse32.v      v30, (%[s11])                   \n\t"
+        :
+        : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+          [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+          [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+          [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112),
+          [s8] "r"(acc_scratch + 128),  [s9] "r"(acc_scratch + 144),
+          [s10] "r"(acc_scratch + 160),  [s11] "r"(acc_scratch + 176)
+        : "memory", "t0");
+    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+}
+
+// ===========================================================================
+// 12x16x8 — grid 4 x 3 (4 M-atoms, 3 N-atoms)
+//   A atoms: v0, v2, v4, v6
+//   B atoms: v1, v3, v5
+//   acc    : 12 pairs {v8,v10,v12,v14,v16,v18,v22,v24,v26,v28,v30}
+//     row mt=0: A0 * {B0,B1,B2,B3} -> v8  v10 v12 v14
+//     row mt=1: A1 * {B0,B1,B2,B3} -> v16 v18 v20 v22
+//     row mt=2: A2 * {B0,B1,B2,B3} -> v24 v26 v28 v30
+// ===========================================================================
+void iree_uk_mmt4d_tile_s8s8s32_16x12x8_ime(
+    const int8_t *lhs, const int8_t *rhs, int32_t *out,
+    int32_t M0, int32_t K0, int32_t flags, int32_t K1)
+{
+    (void)M0;
+    (void)K0;
+    enum { MT = 4, NT = 3, M0_T = 16, N0_T = 12 };
+    int32_t acc_scratch[MT * NT * 16];
+
+    if (flags & 1) {
+
+        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma        \n\t"
+            "vle32.v      v8, (%[s0])                    \n\t"
+            "vle32.v      v10, (%[s1])                   \n\t"
+            "vle32.v      v12, (%[s2])                   \n\t"
+            "vle32.v      v14, (%[s3])                   \n\t"
+            "vle32.v      v16, (%[s4])                   \n\t"
+            "vle32.v      v18, (%[s5])                   \n\t"
+            "vle32.v      v20, (%[s6])                   \n\t"
+            "vle32.v      v22, (%[s7])                   \n\t"
+            "vle32.v      v24, (%[s8])                   \n\t"
+            "vle32.v      v26, (%[s9])                   \n\t"
+            "vle32.v      v28, (%[s10])                  \n\t"
+            "vle32.v      v30, (%[s11])                  \n\t"
+            :
+            : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+              [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+              [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+              [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112),
+              [s8] "r"(acc_scratch + 128),  [s9] "r"(acc_scratch + 144),
+              [s10] "r"(acc_scratch + 160),  [s11] "r"(acc_scratch + 176)
+            : "memory", "t0", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21",
+              "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29",
+              "v30", "v31");
+    } else {
+        __asm__ volatile(
+            "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
+            "vmv.v.i      v8, 0                         \n\t"
+            "vmv.v.i      v10, 0                         \n\t"
+            "vmv.v.i      v12, 0                         \n\t"
+            "vmv.v.i      v14, 0                         \n\t"
+            "vmv.v.i      v16, 0                         \n\t"
+            "vmv.v.i      v18, 0                         \n\t"
+            "vmv.v.i      v20, 0                         \n\t"
+            "vmv.v.i      v22, 0                         \n\t"
+            "vmv.v.i      v24, 0                         \n\t"
+            "vmv.v.i      v26, 0                         \n\t"
+            "vmv.v.i      v28, 0                         \n\t"
+            "vmv.v.i      v30, 0                         \n\t"
+            :
+            :
+            : "t0", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    for (int k1 = 0; k1 < K1; k1++) {
+        const int8_t *A0 = lhs + k1 * (M0_T * IME_K0) + 0 * IME_M_ATOM * IME_K0;
+        const int8_t *A1 = lhs + k1 * (M0_T * IME_K0) + 1 * IME_M_ATOM * IME_K0;
+        const int8_t *A2 = lhs + k1 * (M0_T * IME_K0) + 2 * IME_M_ATOM * IME_K0;
+        const int8_t *A3 = lhs + k1 * (M0_T * IME_K0) + 3 * IME_M_ATOM * IME_K0;
+        const int8_t *B0 = rhs + k1 * (N0_T * IME_K0) + 0 * IME_N_ATOM * IME_K0;
+        const int8_t *B1 = rhs + k1 * (N0_T * IME_K0) + 1 * IME_N_ATOM * IME_K0;
+        const int8_t *B2 = rhs + k1 * (N0_T * IME_K0) + 2 * IME_N_ATOM * IME_K0;
+
+        __asm__ volatile(
+            "vsetvli      t0, x0, e8, m1, ta, ma         \n\t"
+            "vle8.v       v0, (%[A0])                    \n\t"
+            "vle8.v       v2, (%[A1])                    \n\t"
+            "vle8.v       v4, (%[A2])                    \n\t"
+            "vle8.v       v6, (%[A3])                    \n\t"
+            "vle8.v       v1, (%[B0])                    \n\t"
+            "vle8.v       v3, (%[B1])                    \n\t"
+            "vle8.v       v5, (%[B2])                    \n\t"
+
+            "smt.vmadot   v8, v0, v1                     \n\t"
+            "smt.vmadot   v10, v0, v3                    \n\t"
+            "smt.vmadot   v12, v0, v5                    \n\t"
+            
+            "smt.vmadot   v14, v2, v1                    \n\t"
+            "smt.vmadot   v16, v2, v3                    \n\t"
+            "smt.vmadot   v18, v2, v5                    \n\t"
+
+            "smt.vmadot   v20, v4, v1                    \n\t"
+            "smt.vmadot   v22, v4, v3                    \n\t"
+            "smt.vmadot   v24, v4, v5                    \n\t"
+
+            "smt.vmadot   v26, v6, v1                    \n\t"
+            "smt.vmadot   v28, v6, v3                    \n\t"
+            "smt.vmadot   v30, v6, v5                    \n\t"
+            :
+            : [A0] "r"(A0), [A1] "r"(A1), [A2] "r"(A2), [A3] "r"(A3),
+              [B0] "r"(B0), [B1] "r"(B1), [B2] "r"(B2)
+            : "memory", "t0",
+              "v0", "v2", "v4", "v6", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15",
+              "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+              "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
+    }
+
+    __asm__ volatile(
+        "vsetvli      t0, x0, e32, m2, ta, ma        \n\t"
+        "vse32.v      v8, (%[s0])                   \n\t"
+        "vse32.v      v10, (%[s1])                   \n\t"
+        "vse32.v      v12, (%[s2])                   \n\t"
+        "vse32.v      v14, (%[s3])                   \n\t"
+        "vse32.v      v16, (%[s4])                   \n\t"
+        "vse32.v      v18, (%[s5])                   \n\t"
+        "vse32.v      v20, (%[s6])                   \n\t"
+        "vse32.v      v22, (%[s7])                   \n\t"
+        "vse32.v      v24, (%[s8])                   \n\t"
+        "vse32.v      v26, (%[s9])                   \n\t"
+        "vse32.v      v28, (%[s10])                   \n\t"
+        "vse32.v      v30, (%[s11])                   \n\t"
+        :
+        : [s0] "r"(acc_scratch + 0),   [s1] "r"(acc_scratch + 16),
+          [s2] "r"(acc_scratch + 32),  [s3] "r"(acc_scratch + 48),
+          [s4] "r"(acc_scratch + 64),  [s5] "r"(acc_scratch + 80),
+          [s6] "r"(acc_scratch + 96),  [s7] "r"(acc_scratch + 112),
+          [s8] "r"(acc_scratch + 128),  [s9] "r"(acc_scratch + 144),
+          [s10] "r"(acc_scratch + 160),  [s11] "r"(acc_scratch + 176)
+        : "memory", "t0");
+    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+}
+
 // ---------------------------------------------------------------------------
 // Scalar reference kernel
 //
@@ -576,6 +962,7 @@ void mmt4d_reference_s8s8s32(
                 out[m * N0 + n] = 0;
     }
 
+    int num_out = 0;
     for (int k1 = 0; k1 < K1; k1++) {
         const int8_t *A_panel = lhs + k1 * M0 * K0;
         const int8_t *B_panel = rhs + k1 * N0 * K0;
@@ -590,7 +977,9 @@ void mmt4d_reference_s8s8s32(
                          * (int32_t)B_panel[n * K0 + k];
                 }
                 out[m * N0 + n] += acc;
+                num_out++;
             }
         }
     }
+    printf("vals in c: %d\n", num_out);
 }

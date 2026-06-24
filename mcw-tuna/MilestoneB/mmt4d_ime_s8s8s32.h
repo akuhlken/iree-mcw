@@ -46,6 +46,10 @@ IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_8x4x8_ime);
 IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime);
 IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_8x16x8_ime);
 IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_16x8x8_ime);
+IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_12x12x8_ime);
+IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_12x16x8_ime);
+IME_TILE_DECL(iree_uk_mmt4d_tile_s8s8s32_16x12x8_ime);
+
 
 // ---------------------------------------------------------------------------
 // Shared kernel descriptor used by the validate / benchmark harnesses to
