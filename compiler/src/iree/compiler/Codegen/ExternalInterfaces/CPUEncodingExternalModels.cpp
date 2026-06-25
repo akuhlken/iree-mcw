@@ -1049,7 +1049,7 @@ enumerateMatmulTileRiscv64(TypeRange elementTypes, DictionaryAttr config) {
     if (hasFeature(config, "+xsmtvdot")) {
         N0 = 16;
       return {
-          TileMxNxK{8, N0, 8}
+          TileMxNxK{12, N0, 8}
       };
     }
     else {
