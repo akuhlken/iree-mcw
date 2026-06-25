@@ -615,6 +615,10 @@ int main(int argc, char** argv) {
   iree_uk_test_mmt4d(IREE_UK_FLAG_MMT4D_SKIP_INTERMEDIATE_ROUNDINGS |
                          IREE_UK_FLAG_MMT4D_TYPE_F16F16F16,
                      7, 16, 1, "zvfh");
+  // SpaceMiT IME (vmadot) s8s8s32 tile. The harness allows the generic
+  // fallback, so a green run only proves the IME tile executed when this runs
+  // on real IME-capable hardware (Cluster-0 cores 0-3 of the K1 SoC).
+  iree_uk_test_mmt4d(IREE_UK_FLAG_MMT4D_TYPE_S8S8S32, 12, 16, 8, "xsmtvdot");
 
 #endif  // defined(IREE_ARCH_ARM_64)
 
