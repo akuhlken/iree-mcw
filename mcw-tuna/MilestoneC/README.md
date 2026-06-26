@@ -87,8 +87,11 @@ to IREE's `iree_uk_mmt4d_tile_func_t` contract:
 `runtime/src/iree/builtins/ukernel/arch/riscv_64/CMakeLists.txt`
 
 - `IREE_UK_COPTS_RISCV_64_XSMTVDOT = -march=rv64gc_xsmtvdot`
-- `check_cxx_compiler_flag(... IREE_UK_BUILD_RISCV_64_XSMTVDOT)` — system-toolchain
-  library is built only when the toolchain accepts the IME `-march`
+- `check_cxx_compiler_flag(... IREE_UK_BUILD_RISCV_64_XSMTVDOT)` — the
+  `riscv_64_xsmtvdot` static library and entry-point dispatch are compiled in
+  only when the **cross** compiler accepts that `-march`. If the probe fails, the
+  build still succeeds but omits the IME tile; verify via `config_riscv_64.h` and
+  `llvm-nm` (see §5).
 - `ukernel_bitcode_arch_riscv_64_xsmtvdot.bc` in `iree_link_bitcode` (data-tiling
   uses the bitcode path)
 
@@ -134,10 +137,18 @@ cores 0–3) with `iree_uk_cpu_riscv_64_xsmtvdot()` returning true.
 
 ### Prerequisites
 
-- LLVM/Clang RISC-V cross toolchain with `smt.vmadot` support (LLVM ≥ 20).
-  Set `RISCV_TOOLCHAIN_ROOT`; `build_tools/cmake/linux_riscv64.cmake` uses
-  `${prefix}clang` from there (same toolchain as Milestone B).
+- **Host IREE tools:** `build-host/install/bin` (for bitcode / tablegen steps during
+  the runtime cross-build).
+- **RISC-V cross toolchain with `+xsmtvdot`:** LLVM ≥ 20 with SpaceMiT
+  `smt.vmadot` support. At configure time, CMake runs
+  `check_cxx_compiler_flag(-march=rv64gc_xsmtvdot)`; if the compiler rejects
+  that string, `IREE_UK_BUILD_RISCV_64_XSMTVDOT` stays off and the IME object
+  file is not built or linked.
 - Banana Pi BPI-F3 or Milk-V Jupiter over SSH.
+
+Many prebuilt RISC-V toolchains (including older IREE CI bundles based on Clang
+18) do **not** accept `rv64gc_xsmtvdot`. A build against such a toolchain
+completes successfully but produces binaries **without** the IME tile function.
 
 ### 1. Host tools (once)
 
@@ -150,14 +161,89 @@ cmake --build build-host --target install
 
 ### 2. Cross-compile for RISC-V
 
+`build_tools/cmake/build_riscv.sh` reads `RISCV_TOOLCHAIN_ROOT` and passes it to
+`linux_riscv64.cmake`, which selects `${RISCV_TOOLCHAIN_ROOT}/bin/clang`.
+
+**Option A — full xsmtvdot-capable toolchain**
+
+Point `RISCV_TOOLCHAIN_ROOT` at an LLVM RISC-V install that accepts
+`-march=rv64gc_xsmtvdot`:
+
 ```sh
-export RISCV_TOOLCHAIN_ROOT=/path/to/llvm-riscv-toolchain
+export RISCV_TOOLCHAIN_ROOT=/path/to/llvm-riscv-with-xsmtvdot
 export IREE_HOST_BIN_DIR="$(pwd)/build-host/install/bin"
 ./build_tools/cmake/build_riscv.sh build-riscv
 ```
 
-Builds via `linux_riscv64.cmake`, including `riscv_64_xsmtvdot`
-(`-march=rv64gc_xsmtvdot`) when `IREE_UK_BUILD_RISCV_64_XSMTVDOT` is set.
+**Option B — wrapper around `build-host` Clang (repo-local)**
+
+Use this when a stock RISC-V bundle provides sysroot, `libgcc`, and binutils,
+but its bundled Clang is too old for `+xsmtvdot` (e.g. Clang 18). The wrapper
+combines **host** Clang from `build-host` (LLVM ≥ 20 with SpaceMiT support) with
+that stock bundle. The generated tree is gitignored; run the setup script once
+per machine.
+
+1. Set `RISCV_BASE_TOOLCHAIN` to the **stock** RISC-V install (must contain
+   `bin/llvm-ar`, `sysroot/`, `lib/gcc/`, … — the same layout
+   `linux_riscv64.cmake` expects).
+
+2. Generate the wrapper (from the repository root):
+
+```sh
+export RISCV_BASE_TOOLCHAIN=/path/to/stock-riscv-toolchain   # e.g. .../clang/linux/RISCV
+./toolchains/setup-riscv-xsmtvdot.sh
+```
+
+Optional: `RISCV_HOST_CLANG=/path/to/clang` if Clang is not under
+`build-host/llvm-project/bin/` or `build-host/install/bin/`.
+
+3. Cross-compile using the generated wrapper:
+
+```sh
+export RISCV_TOOLCHAIN_ROOT="$(pwd)/toolchains/riscv-xsmtvdot"
+export IREE_HOST_BIN_DIR="$(pwd)/build-host/install/bin"
+./build_tools/cmake/build_riscv.sh build-riscv
+```
+
+The setup script writes `bin/clang` and `bin/clang++` wrappers that invoke host
+Clang with `--target=riscv64-unknown-linux-gnu`, `--sysroot`, and
+`--gcc-toolchain` from `RISCV_BASE_TOOLCHAIN`. Binutils under `bin/` and
+top-level `sysroot/`, `lib/`, … are symlinks into that base bundle.
+Re-run `./toolchains/setup-riscv-xsmtvdot.sh` after moving the repository or
+changing either toolchain path.
+
+Do **not** pass linker-only flags (e.g. `-fuse-ld=lld`) from these wrapper
+scripts. IREE already adds `-fuse-ld=lld` via `-DIREE_ENABLE_LLD=ON` at link
+time. Putting `-fuse-ld=lld` in the compiler driver breaks Google Benchmark's
+configure-time compile checks (`-Werror` treats the unused flag as an error):
+`Failed to determine the source files for the regular expression backend`.
+
+If configure fails after switching toolchains, remove stale CMake cache entries
+or delete `build-riscv` and reconfigure. CMake caches the compiler path and
+feature-probe results (`HAVE_STD_REGEX`, `IREE_UK_BUILD_RISCV_64_XSMTVDOT`) from
+the first configure; changing `RISCV_TOOLCHAIN_ROOT` alone does not always
+re-run those probes.
+
+```sh
+# Either:
+rm -rf build-riscv && ./build_tools/cmake/build_riscv.sh build-riscv
+
+# Or, once, clear stale probes then rebuild:
+cmake -B build-riscv \
+  -U HAVE_STD_REGEX -U HAVE_GNU_POSIX_REGEX -U HAVE_POSIX_REGEX \
+  -U IREE_UK_BUILD_RISCV_64_XSMTVDOT
+./build_tools/cmake/build_riscv.sh build-riscv
+```
+
+Harmless warnings about failing to strip debug from `libgcc.a` through wrapper
+symlinks can be ignored.
+
+When xsmtvdot is enabled, the generated header defines the macro:
+
+```
+build-riscv/runtime/src/iree/builtins/ukernel/arch/riscv_64/config_riscv_64.h
+  → #define IREE_UK_BUILD_RISCV_64_XSMTVDOT
+```
 
 Test binaries (executable names, not CMake target names):
 
@@ -171,8 +257,10 @@ build-riscv/runtime/src/iree/builtins/ukernel/tools/mmt4d_benchmark
 IME instructions exist only on Cluster-0 (cores 0–3). Cluster-1 (cores 4–7)
 raises illegal instruction; always use `taskset -c 0-3`.
 
-Set `IREE_CPU_FORCE_RISCV_64_XSMTVDOT=1` — without it, host detection never
-reports `xsmtvdot` and IME cases are `SKIPPED`.
+Set `IREE_CPU_FORCE_RISCV_64_XSMTVDOT=1` on the board — without it, host
+detection never reports `xsmtvdot` and IME cases are `SKIPPED`. This override
+only affects **runtime feature advertisement**; it does not add a kernel that was
+not linked at build time (see §5).
 
 ```sh
 scp build-riscv/runtime/src/iree/builtins/ukernel/tools/mmt4d_test \
@@ -191,21 +279,76 @@ the harness logs `🚀 CPU supports required features` (not `🦕 ... SKIPPED`).
 Output is compared to an on-device scalar reference in accumulate and overwrite
 modes — a pass means bit-exact agreement with `vmadot`.
 
-**Throughput:** `mmt4d_benchmark` reports `s8s8s32 ... 12x16x8 ... xsmtvdot`.
-Compare `items/s` (MACs/s) to the `s8s8s32 ... 7x32x1 ... v` RVV row.
+**Throughput:** interpret benchmark rows carefully. The IME tile is registered
+only for `M0=12, K0=8`. Other `xsmtvdot`-labelled rows (`1x16x8`, `2x16x8`, …)
+do not match that tile and, with `ALLOW_GENERIC_FALLBACK`, run the **scalar
+generic** kernel — expect ~10²–10³ M/s, not IME throughput. The row that
+exercises `vmadot` is:
 
-### 5. Verify `vmadot` in the binary (optional)
+`types:s8s8s32 tile:12x16x8 cpu_features:xsmtvdot`
+
+Compare its `items/s` (MACs/s) to the `s8s8s32 ... 7x32x1 ... v` RVV row.
+
+For throughput-focused runs, filter the benchmark:
 
 ```sh
-${RISCV_TOOLCHAIN_ROOT}/bin/llvm-nm build-riscv/runtime/src/iree/builtins/ukernel/tools/mmt4d_test \
-  | grep iree_uk_mmt4d_tile_s8s8s32_12xXXx8_riscv_64_xsmtvdot
+./mmt4d_benchmark --benchmark_filter='12x16x8.*xsmtvdot'
+```
 
-${RISCV_TOOLCHAIN_ROOT}/bin/llvm-objdump -d build-riscv/runtime/src/iree/builtins/ukernel/tools/mmt4d_test \
+Default `build_riscv.sh` uses `RelWithDebInfo` and `IREE_ENABLE_ASSERTIONS=ON`,
+which makes Google Benchmark print `Library was built as DEBUG`. That affects
+diagnostics, not ukernel hot-path codegen (the tile body is mostly inline asm).
+Use `CMAKE_BUILD_TYPE=Release IREE_ENABLE_ASSERTIONS=OFF` when a Release binary
+is required.
+
+### 5. Verify the IME kernel is linked
+
+Before copying binaries to the board, confirm the IME tile object is present.
+An empty `grep` here means the binary will not call `vmadot` regardless of
+`IREE_CPU_FORCE_RISCV_64_XSMTVDOT`.
+
+**Build-time macro**
+
+```sh
+grep IREE_UK_BUILD_RISCV_64_XSMTVDOT \
+  build-riscv/runtime/src/iree/builtins/ukernel/arch/riscv_64/config_riscv_64.h
+# expect: #define IREE_UK_BUILD_RISCV_64_XSMTVDOT
+# if commented out (#undef), reconfigure with an xsmtvdot-capable toolchain
+```
+
+**Symbol in the test/benchmark binary**
+
+```sh
+${RISCV_TOOLCHAIN_ROOT}/bin/llvm-nm \
+  build-riscv/runtime/src/iree/builtins/ukernel/tools/mmt4d_benchmark \
+  | grep xsmtvdot
+# expect: iree_uk_mmt4d_tile_s8s8s32_12xXXx8_riscv_64_xsmtvdot
+```
+
+**`vmadot` instructions in the disassembly**
+
+```sh
+${RISCV_TOOLCHAIN_ROOT}/bin/llvm-objdump -d \
+  build-riscv/runtime/src/iree/builtins/ukernel/tools/mmt4d_test \
   | grep -A2 vmadot | head
 ```
 
 On device, `🚀 CPU supports required features` plus a pass on Cluster-0 with
-`IREE_CPU_FORCE_RISCV_64_XSMTVDOT=1` confirms the IME tile was selected.
+`IREE_CPU_FORCE_RISCV_64_XSMTVDOT=1` confirms runtime dispatch selected the IME
+tile — but only if the symbol above was present in the binary copied to the board.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Action |
+| ------- | ------------ | ------ |
+| `llvm-nm … \| grep xsmtvdot` prints nothing | Toolchain probe failed; `IREE_UK_BUILD_RISCV_64_XSMTVDOT` off | Use Option A or B in §2; verify `#define` in `config_riscv_64.h`; rebuild |
+| IME cases `SKIPPED` on the board | No OS hwprobe bit for IME | Set `IREE_CPU_FORCE_RISCV_64_XSMTVDOT=1` and pin to cores 0–3 |
+| Tests pass / benchmark runs but throughput ~225 M/s on all `xsmtvdot` rows | Generic fallback (wrong `M0`, or kernel not linked) | Filter to `12x16x8`; re-check §5 |
+| Configure error: `Failed to determine … regular expression backend` | Linker flag in compiler wrapper (e.g. `-fuse-ld=lld`) | Re-run `./toolchains/setup-riscv-xsmtvdot.sh` (do not add `-fuse-ld=lld` to wrappers); clear `HAVE_STD_REGEX*` cache or wipe `build-riscv` |
+| `toolchains/riscv-xsmtvdot/bin/clang`: No such file | Wrapper not generated (gitignored) | Run `./toolchains/setup-riscv-xsmtvdot.sh` with `RISCV_BASE_TOOLCHAIN` set |
+| Illegal instruction on the board | Running on Cluster-1 (cores 4–7) | `taskset -c 0-3` |
 
 ---
 
@@ -224,3 +367,4 @@ Paths under `runtime/src/iree/builtins/ukernel/` unless noted.
 | `base/internal/cpu.c` | `IREE_CPU_FORCE_RISCV_64_XSMTVDOT` override |
 | `tools/mmt4d_test.c` | 12×16×8 `xsmtvdot` test case |
 | `tools/mmt4d_benchmark.c` | 12×16×8 `xsmtvdot` benchmark case |
+| `toolchains/setup-riscv-xsmtvdot.sh` | Generates gitignored `toolchains/riscv-xsmtvdot/` wrapper (Option B) |

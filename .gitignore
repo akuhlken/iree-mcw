@@ -111,3 +111,6 @@ artifacts/
 # Side effects of local patching/merging
 *.orig
 *.rej
+
+# Generated xsmtvdot wrapper toolchain (see toolchains/setup-riscv-xsmtvdot.sh)
+toolchains/riscv-xsmtvdot/
