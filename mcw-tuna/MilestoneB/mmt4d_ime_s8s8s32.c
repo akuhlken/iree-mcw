@@ -53,6 +53,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <riscv_vector.h>
+
 
 #include "mmt4d_ime_s8s8s32.h"
 
@@ -109,7 +111,8 @@ static void ime_gather_acc(const int32_t *out, int32_t *scratch,
 {
     for (int mt = 0; mt < MT; mt++) {
         for (int nt = 0; nt < NT; nt++) {
-            int32_t *dst = scratch + (mt * NT + nt) * 16;
+            // for each tile combo, aka for each accumulator.
+            int32_t *dst = scratch + (mt * NT + nt) * 16;  // the destination tile
             const int32_t *src = out + (mt * IME_M_ATOM) * N0 + (nt * IME_N_ATOM);
             for (int r = 0; r < IME_M_ATOM; r++)
                 for (int c = 0; c < IME_N_ATOM; c++)
@@ -209,9 +212,22 @@ void iree_uk_mmt4d_tile_s8s8s32_8x4x8_ime(
     (void)K0;
     enum { MT = 2, NT = 1, M0_T = 8, N0_T = 4 };
     int32_t acc_scratch[MT * NT * 16];
+    int32_t *acc_ptr = acc_scratch;
+    // vint32m4_t acc1, acc2;
 
     if (flags & 1) {
-        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        // ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        for (int mt = 0; mt < MT; mt++) {
+            for (int nt = 0; nt < NT; nt++) {
+                // for each tile combo, aka for each accumulator.
+                int32_t *dst = acc_ptr + (mt * NT + nt) * 16;  // the destination tile
+                const int32_t *src = out + (mt * IME_M_ATOM) * N0_T + (nt * IME_N_ATOM);
+                for (int r = 0; r < IME_M_ATOM; r++)
+                    for (int c = 0; c < IME_N_ATOM; c++)
+                        dst[r * IME_N_ATOM + c] = src[r * N0_T + c];
+            }
+        }
+    
         __asm__ volatile(
             "vsetvli      t0, x0, e32, m2, ta, ma       \n\t"
             "vle32.v      v16, (%[s0])                   \n\t"
@@ -254,7 +270,17 @@ void iree_uk_mmt4d_tile_s8s8s32_8x4x8_ime(
         :
         : [s0] "r"(acc_scratch + 0), [s1] "r"(acc_scratch + 16)
         : "memory", "t0");
-    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+
+    // ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+    for (int mt = 0; mt < MT; mt++) {
+        for (int nt = 0; nt < NT; nt++) {
+            const int32_t *src = acc_ptr + (mt * NT + nt) * 16;
+            int32_t *dst = out + (mt * IME_M_ATOM) * N0_T + (nt * IME_N_ATOM);
+            for (int r = 0; r < IME_M_ATOM; r++)
+                for (int c = 0; c < IME_N_ATOM; c++)
+                    dst[r * N0_T + c] = src[r * IME_N_ATOM + c];
+        }
+    }
 }
 
 // ===========================================================================
@@ -689,10 +715,20 @@ void iree_uk_mmt4d_tile_s8s8s32_12x16x8_ime(
     (void)K0;
     enum { MT = 3, NT = 4, M0_T = 12, N0_T = 16 };
     int32_t acc_scratch[MT * NT * 16];
+    int32_t *acc_ptr = acc_scratch;
+
 
     if (flags & 1) {
-
-        ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+        for (int mt = 0; mt < MT; mt++) {
+            for (int nt = 0; nt < NT; nt++) {
+                // for each tile combo, aka for each accumulator.
+                int32_t *dst = acc_ptr + (mt * NT + nt) * 16;  // the destination tile
+                const int32_t *src = out + (mt * IME_M_ATOM) * N0_T + (nt * IME_N_ATOM);
+                for (int r = 0; r < IME_M_ATOM; r++)
+                    for (int c = 0; c < IME_N_ATOM; c++)
+                        dst[r * IME_N_ATOM + c] = src[r * N0_T + c];
+            }
+        }        
         __asm__ volatile(
             "vsetvli      t0, x0, e32, m2, ta, ma        \n\t"
             "vle32.v      v8, (%[s0])                    \n\t"
@@ -801,7 +837,15 @@ void iree_uk_mmt4d_tile_s8s8s32_12x16x8_ime(
           [s8] "r"(acc_scratch + 128),  [s9] "r"(acc_scratch + 144),
           [s10] "r"(acc_scratch + 160),  [s11] "r"(acc_scratch + 176)
         : "memory", "t0");
-    ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+    for (int mt = 0; mt < MT; mt++) {
+        for (int nt = 0; nt < NT; nt++) {
+            const int32_t *src = acc_ptr + (mt * NT + nt) * 16;
+            int32_t *dst = out + (mt * IME_M_ATOM) * N0_T + (nt * IME_N_ATOM);
+            for (int r = 0; r < IME_M_ATOM; r++)
+                for (int c = 0; c < IME_N_ATOM; c++)
+                    dst[r * N0_T + c] = src[r * IME_N_ATOM + c];
+        }
+    }
 }
 
 // ===========================================================================
