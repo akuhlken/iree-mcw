@@ -117,6 +117,7 @@ iree_link_bitcode(
     "ukernel_bitcode_arch_riscv_64_v.bc"
     "ukernel_bitcode_arch_riscv_64_zvfh.bc"
     "ukernel_bitcode_arch_riscv_64_zvfhmin.bc"
+    "ukernel_bitcode_arch_riscv_64_xsmtvdot.bc"
 
 )
 
@@ -145,8 +146,14 @@ iree_select_compiler_opts(IREE_UK_COPTS_RISCV_64_ZVFH
     "-march=rv64gc_zvfh"
 )
 
+iree_select_compiler_opts(IREE_UK_COPTS_RISCV_64_XSMTVDOT
+  CLANG_OR_GCC
+    "-march=rv64gc_xsmtvdot"
+)
+
 check_cxx_compiler_flag("${IREE_UK_COPTS_RISCV_64_V}" IREE_UK_BUILD_RISCV_64_V)
 check_cxx_compiler_flag("${IREE_UK_COPTS_RISCV_64_ZVFH}" IREE_UK_BUILD_RISCV_64_ZVFH)
+check_cxx_compiler_flag("${IREE_UK_COPTS_RISCV_64_XSMTVDOT}" IREE_UK_BUILD_RISCV_64_XSMTVDOT)
 
 # CPU features that we will try checking compiler support for, unless
 # we set them to OFF below.
