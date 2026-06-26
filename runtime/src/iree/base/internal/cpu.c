@@ -379,6 +379,7 @@ static void iree_cpu_initialize_from_platform_x86_64(uint64_t* out_fields) {
 // See:
 // https://github.com/torvalds/linux/blob/master/Documentation/arch/riscv/hwprobe.rst
 #include <sched.h>
+#include <stdlib.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #ifdef __has_include
@@ -429,6 +430,16 @@ static void iree_cpu_initialize_from_platform_riscv_64(uint64_t* out_fields) {
                  IREE_RISCV_HWPROBE_EXT_ZVFHMIN);
   IREE_COPY_BITS(out_fields[0], IREE_CPU_DATA0_RISCV_64_ZVFH, hwprobe,
                  IREE_RISCV_HWPROBE_EXT_ZVFH);
+  // The SpaceMiT IME (XSMTVDot / vmadot) matrix extension is not advertised by
+  // any OS probe (no hwprobe/HWCAP bit), and on the K1 SoC only Cluster-0 cores
+  // (0-3) implement it. Allow opting in at runtime so that IME-capable runs
+  // (e.g. pinned with `taskset -c 0-3`) can select and exercise the IME ukernel
+  // tile; without this the runtime tile-selector and the ukernel tests fall
+  // back to / skip the IME path. Default off so heterogeneous-topology systems
+  // are unaffected.
+  if (getenv("IREE_CPU_FORCE_RISCV_64_XSMTVDOT")) {
+    out_fields[0] |= IREE_CPU_DATA0_RISCV_64_XSMTVDOT;
+  }
 }
 
 #else
