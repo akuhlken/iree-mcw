@@ -90,9 +90,18 @@ iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot(
 
   enum { MT = 3, NT = 4, M0_T = 12, N0_T = 16 };
   iree_uk_int32_t acc_scratch[MT * NT * 16];
+  iree_uk_int32_t *acc_ptr = acc_scratch;
 
   if (params->flags & IREE_UK_FLAG_MMT4D_ACCUMULATE) {
-    iree_uk_ime_gather_acc(out, acc_scratch, MT, NT, N0_T);
+    for (int mt = 0; mt < MT; mt++) {
+        for (int nt = 0; nt < NT; nt++) {
+            iree_uk_int32_t *dst = acc_ptr + (mt * NT + nt) * 16; 
+            const iree_uk_int32_t *src = out + (mt * IME_M_ATOM) * N0_T + (nt * IME_N_ATOM);
+            for (int r = 0; r < IME_M_ATOM; r++)
+                for (int c = 0; c < IME_N_ATOM; c++)
+                    dst[r * IME_N_ATOM + c] = src[r * N0_T + c];
+        }
+    }  
     __asm__ volatile(
         "vsetvli      t0, x0, e32, m2, ta, ma        \n\t"
         "vle32.v      v8, (%[s0])                    \n\t"
@@ -207,7 +216,15 @@ iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot(
         [s10] "r"(acc_scratch + 160), [s11] "r"(acc_scratch + 176)
       : "memory", "t0");
 
-  iree_uk_ime_scatter_acc(out, acc_scratch, MT, NT, N0_T);
+    for (int mt = 0; mt < MT; mt++) {
+        for (int nt = 0; nt < NT; nt++) {
+            const int32_t *src = acc_ptr + (mt * NT + nt) * 16;
+            int32_t *dst = out + (mt * IME_M_ATOM) * N0_T + (nt * IME_N_ATOM);
+            for (int r = 0; r < IME_M_ATOM; r++)
+                for (int c = 0; c < IME_N_ATOM; c++)
+                    dst[r * N0_T + c] = src[r * IME_N_ATOM + c];
+        }
+    }
 }
 
 IREE_UK_MMT4D_TILE_FUNC_IMPL_FOR_M0(
