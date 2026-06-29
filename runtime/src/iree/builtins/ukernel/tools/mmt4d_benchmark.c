@@ -111,9 +111,13 @@ static void iree_uk_benchmark_register_mmt4d(iree_uk_uint32_t flags, int M0,
                                              const char* cpu_features) {
   // Test narrowed, power-of-two values of M0, as mmt4d kernels tend to have
   // narrow variants for handling these cases.
-  for (int narrowM0 = 1; narrowM0 < M0; narrowM0 *= 2) {
-    iree_uk_benchmark_register_mmt4d_impl(flags, narrowM0, N0, K0, cpu_features,
-                                          "");
+  // xsmtvdot doesn't have any narrowed alternatives, so we don't want to use any
+  // sub-variants.
+  if (!strcmp(cpu_features,"xsmtvdot")) {
+    for (int narrowM0 = 1; narrowM0 < M0; narrowM0 *= 2) {
+        iree_uk_benchmark_register_mmt4d_impl(flags, narrowM0, N0, K0, cpu_features,
+                                            "");
+    }
   }
   iree_uk_benchmark_register_mmt4d_impl(flags, M0, N0, K0, cpu_features, "");
 }
