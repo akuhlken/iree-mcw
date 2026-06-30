@@ -23,7 +23,7 @@ iree_uk_mmt4d_p
        └─ #include "mmt4d_riscv_64_tiles.inl"   (table of (type, M0, K0, suffix))
             └─ matches (s8s8s32, M0=12, K0=8, _xsmtvdot)
                AND iree_uk_cpu_riscv_64_xsmtvdot(cpu_data) == true
-                 └─ iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot
+                 └─ iree_uk_mmt4d_tile_s8s8s32_12xXXx8_riscv_64_xsmtvdot
                       └─ smt.vmadot inline asm
 ```
 
@@ -34,7 +34,7 @@ A mismatch causes data-tiling to fall back to plain codegen with no error.
 | Piece                                       | Value                                                  |
 | ------------------------------------------- | ------------------------------------------------------ |
 | Tile table row (`mmt4d_riscv_64_tiles.inl`) | `s8, s8, s32, 12, 8, _xsmtvdot`                        |
-| Generated symbol                            | `iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot` |
+| Generated symbol                            | `iree_uk_mmt4d_tile_s8s8s32_12xXXx8_riscv_64_xsmtvdot` |
 | CPU gate predicate                          | `iree_uk_cpu_riscv_64_xsmtvdot`                        |
 | Build feature macro                         | `IREE_UK_BUILD_RISCV_64_XSMTVDOT`                      |
 | Feature string / `-march`                   | `xsmtvdot` / `-march=rv64gc_xsmtvdot`                  |
@@ -73,7 +73,7 @@ to IREE's `iree_uk_mmt4d_tile_func_t` contract:
 - Gather/scatter uses `iree_uk_int32_t acc_scratch[]`.
 - Freestanding: `iree_uk_*` types only; no libc.
 - Registered via
-  `IREE_UK_MMT4D_TILE_FUNC_IMPL_FOR_M0(..., iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot, 12)`.
+  `IREE_UK_MMT4D_TILE_FUNC_IMPL_FOR_M0(..., iree_uk_mmt4d_tile_s8s8s32_12xXXx8_riscv_64_xsmtvdot, 12)`.
 
 ### C3 — Tile table and entry point
 
@@ -159,8 +159,8 @@ cmake -G Ninja -B build-host \
     -DIREE_ENABLE_ASSERTIONS=ON \
     -DIREE_ENABLE_SPLIT_DWARF=ON \
     -DIREE_ENABLE_THIN_ARCHIVES=ON \
-    -DCMAKE_C_COMPILER=/usr/bin/clang \
-    -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+    -DCMAKE_C_COMPILER=/usr/bin/clang-14 \
+    -DCMAKE_CXX_COMPILER=/usr/bin/clang++-14 \
     -DIREE_ENABLE_LLD=ON
 cmake --build build-host --target install
 ```
@@ -328,7 +328,7 @@ grep IREE_UK_BUILD_RISCV_64_XSMTVDOT \
 ${RISCV_TOOLCHAIN_ROOT}/bin/llvm-nm \
   build-riscv/runtime/src/iree/builtins/ukernel/tools/mmt4d_benchmark \
   | grep xsmtvdot
-# expect: iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot
+# expect: iree_uk_mmt4d_tile_s8s8s32_12xXXx8_riscv_64_xsmtvdot
 ```
 
 **`vmadot` instructions in the disassembly**

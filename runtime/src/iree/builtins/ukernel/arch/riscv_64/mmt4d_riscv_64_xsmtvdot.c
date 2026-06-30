@@ -229,4 +229,4 @@ iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot(
 
 IREE_UK_MMT4D_TILE_FUNC_IMPL_FOR_M0(
     iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot,
-    iree_uk_mmt4d_tile_s8s8s32_12x16x8_riscv_64_xsmtvdot, 12)
+    iree_uk_mmt4d_tile_s8s8s32_12xXXx8_riscv_64_xsmtvdot, 12)
