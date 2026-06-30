@@ -38,6 +38,7 @@ static const ime_kernel_desc_t kKernels[] = {
     {"s8s8s32_4x8x8_ime",  iree_uk_mmt4d_tile_s8s8s32_4x8x8_ime,   4,  8, 8},
     {"s8s8s32_8x4x8_ime",  iree_uk_mmt4d_tile_s8s8s32_8x4x8_ime,   8,  4, 8},
     {"s8s8s32_8x8x8_ime",  iree_uk_mmt4d_tile_s8s8s32_8x8x8_ime,   8,  8, 8},
+    {"s8s8s32_4x16x8_ime", iree_uk_mmt4d_tile_s8s8s32_4x16x8_ime,  4, 16, 8},
     {"s8s8s32_8x16x8_ime", iree_uk_mmt4d_tile_s8s8s32_8x16x8_ime,  8, 16, 8},
     {"s8s8s32_16x8x8_ime", iree_uk_mmt4d_tile_s8s8s32_16x8x8_ime, 16,  8, 8},
     {"s8s8s32_12x12x8_ime", iree_uk_mmt4d_tile_s8s8s32_12x12x8_ime, 12, 12, 8},
