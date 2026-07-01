@@ -35,7 +35,6 @@ iree_uk_mmt4d_tile_s8s8s32_4x16x8_to_12x16x8_riscv_64_xsmtvdot(
     const void* IREE_UK_RESTRICT rhs_panel,
     const iree_uk_mmt4d_params_t* params, int M0) {
   IREE_UK_ASSERT(M0 == 4 || M0 == 8 || M0 <= 12);
-//   IREE_UK_ASSERT(M0 >= 4 && M0 <= 12);
   IREE_UK_ASSERT(params->N0 == 16);
   IREE_UK_ASSERT(params->K0 == IME_K0);
 
@@ -46,7 +45,7 @@ iree_uk_mmt4d_tile_s8s8s32_4x16x8_to_12x16x8_riscv_64_xsmtvdot(
   // K1 is the number of K0-deep panels reduced by this call.
   const int K1 = (int)(params->K);
 
-  // M0 and N0 are the dimensions which are passed in:
+  // N0 is always 16 (confirmed via assert), so NT is always 4.
   enum { NT = 4, N0 = 16 };
 
   if (M0 == 4) {
@@ -246,7 +245,7 @@ iree_uk_mmt4d_tile_s8s8s32_4x16x8_to_12x16x8_riscv_64_xsmtvdot(
         }
     }
   } else if (M0 == 12) {
-    enum { MT = 4 };
+    enum { MT = 3 };
     iree_uk_int32_t acc_scratch[MT * NT * 16];
     iree_uk_int32_t *acc_ptr = acc_scratch;
 
@@ -276,11 +275,11 @@ iree_uk_mmt4d_tile_s8s8s32_4x16x8_to_12x16x8_riscv_64_xsmtvdot(
             "vle32.v      v30, (%[s11])                  \n\t"
             :
             : [s0] "r"(acc_scratch + 0), [s1] "r"(acc_scratch + 16),
-            [s2] "r"(acc_scratch + 32), [s3] "r"(acc_scratch + 48),
-            [s4] "r"(acc_scratch + 64), [s5] "r"(acc_scratch + 80),
-            [s6] "r"(acc_scratch + 96), [s7] "r"(acc_scratch + 112),
-            [s8] "r"(acc_scratch + 128), [s9] "r"(acc_scratch + 144),
-            [s10] "r"(acc_scratch + 160), [s11] "r"(acc_scratch + 176)
+              [s2] "r"(acc_scratch + 32), [s3] "r"(acc_scratch + 48),
+              [s4] "r"(acc_scratch + 64), [s5] "r"(acc_scratch + 80),
+              [s6] "r"(acc_scratch + 96), [s7] "r"(acc_scratch + 112),
+              [s8] "r"(acc_scratch + 128), [s9] "r"(acc_scratch + 144),
+              [s10] "r"(acc_scratch + 160), [s11] "r"(acc_scratch + 176)
             : "memory", "t0", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15",
             "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25",
             "v26", "v27", "v28", "v29", "v30", "v31");
@@ -344,8 +343,8 @@ iree_uk_mmt4d_tile_s8s8s32_4x16x8_to_12x16x8_riscv_64_xsmtvdot(
             "smt.vmadot   v28, v4, v5                    \n\t"
             "smt.vmadot   v30, v4, v6                    \n\t"
             :
-            : [A0] "r"(A0), [A1] "r"(A1), [A2] "r"(A2), [B0] "r"(B0), [B1] "r"(B1),
-            [B2] "r"(B2), [B3] "r"(B3)
+            : [A0] "r"(A0), [A1] "r"(A1), [A2] "r"(A2), 
+              [B0] "r"(B0), [B1] "r"(B1), [B2] "r"(B2), [B3] "r"(B3)
             : "memory", "t0", "v0", "v2", "v4", "v6", "v8", "v9", "v10", "v11",
             "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21",
             "v22", "v23", "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31");
@@ -367,11 +366,11 @@ iree_uk_mmt4d_tile_s8s8s32_4x16x8_to_12x16x8_riscv_64_xsmtvdot(
         "vse32.v      v30, (%[s11])                  \n\t"
         :
         : [s0] "r"(acc_scratch + 0), [s1] "r"(acc_scratch + 16),
-            [s2] "r"(acc_scratch + 32), [s3] "r"(acc_scratch + 48),
-            [s4] "r"(acc_scratch + 64), [s5] "r"(acc_scratch + 80),
-            [s6] "r"(acc_scratch + 96), [s7] "r"(acc_scratch + 112),
-            [s8] "r"(acc_scratch + 128), [s9] "r"(acc_scratch + 144),
-            [s10] "r"(acc_scratch + 160), [s11] "r"(acc_scratch + 176)
+          [s2] "r"(acc_scratch + 32), [s3] "r"(acc_scratch + 48),
+          [s4] "r"(acc_scratch + 64), [s5] "r"(acc_scratch + 80),
+          [s6] "r"(acc_scratch + 96), [s7] "r"(acc_scratch + 112),
+          [s8] "r"(acc_scratch + 128), [s9] "r"(acc_scratch + 144),
+          [s10] "r"(acc_scratch + 160), [s11] "r"(acc_scratch + 176)
         : "memory", "t0");
 
         for (int mt = 0; mt < MT; mt++) {
@@ -387,6 +386,9 @@ iree_uk_mmt4d_tile_s8s8s32_4x16x8_to_12x16x8_riscv_64_xsmtvdot(
 }
 
 // TODO: fix the names. N0 is a set value and that's not reflected here.
+// the N0 values default to XX in 
+// /runtime/src/iree/builtins/ukernel/arch/riscv_64/mmt4d_riscv_64_entry_point.c
+// so a change would have to be made there if desired.
 IREE_UK_MMT4D_TILE_FUNC_IMPL_FOR_M0(
     iree_uk_mmt4d_tile_s8s8s32_4x16x8_to_12x16x8_riscv_64_xsmtvdot,
     iree_uk_mmt4d_tile_s8s8s32_4xXXx8_riscv_64_xsmtvdot, 4)
