@@ -1047,9 +1047,10 @@ enumerateMatmulTileRiscv64(TypeRange elementTypes, DictionaryAttr config) {
       out.isSignlessInteger(32)) {
     int N0 = vlen / 8;
     if (hasFeature(config, "+xsmtvdot")) {
-        N0 = 16;
       return {
-          TileMxNxK{12, N0, 8}
+          TileMxNxK{12, 16, 8}, // IME 3×4 atom grid; primary shape.
+          TileMxNxK{8, 16, 8},  // Truncation for narrow M.
+          TileMxNxK{4, 16, 8},  // Truncation for narrow M.
       };
     }
     else {
