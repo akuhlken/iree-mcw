@@ -97,6 +97,10 @@ bool hasI8mmFeature(DictionaryAttr targetConfig) {
   return hasFeature(targetConfig, "+i8mm");
 }
 
+bool hasXsmtvdotFeature(DictionaryAttr targetConfig) {
+  return hasFeature(targetConfig, "+xsmtvdot");
+}
+
 bool isLinalgGeneric2DTranspose(linalg::GenericOp genericOp) {
   // Check op has 2 dimensions.
   if (genericOp.getNumLoops() != 2) {

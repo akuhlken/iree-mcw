@@ -55,6 +55,9 @@ bool hasSMEFeature(DictionaryAttr targetConfig);
 /// Returns true if the 'targetAttr' contains '+i8mm' in its cpu features.
 bool hasI8mmFeature(DictionaryAttr targetConfig);
 
+/// Returns true if the 'targetAttr' contains '+xsmtvdot' in its cpu features.
+bool hasXsmtvdotFeature(DictionaryAttr targetConfig);
+
 /// Returns true if the `genericOp` is a simple 2D transpose, i.e.,
 ///
 ///   1. The op has 2 dimensions.

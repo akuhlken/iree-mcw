@@ -209,7 +209,10 @@ static const char *getDefaultEnabledUkernels(DictionaryAttr targetConfig) {
   if (isAArch64(targetConfig)) {
     return "mmt4d";
   }
-  if (isRISCV64(targetConfig)) {
+  // Auto-enable mmt4d for IME-capable RISC-V targets so callers do not need
+  // --iree-llvmcpu-enable-ukernels=mmt4d explicitly. Plain +v targets are
+  // unaffected; they still require the explicit flag.
+  if (isRISCV64(targetConfig) && hasFeature(targetConfig, "+xsmtvdot")) {
     return "mmt4d";
   }
   return kNone;
