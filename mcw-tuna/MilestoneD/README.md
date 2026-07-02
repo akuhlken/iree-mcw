@@ -39,8 +39,6 @@ returns:
 TileMxNxK{12, 16, 8},  // primary — 3×4 vmadot atom grid
 TileMxNxK{8,  16, 8},  // M-truncations for narrow M
 TileMxNxK{4,  16, 8},
-TileMxNxK{2,  16, 8},
-TileMxNxK{1,  16, 8},
 ```
 
 Without `+xsmtvdot`, the existing RVV widening path (`M0=7, K0=1, N0=vlen/8`)

@@ -1051,8 +1051,6 @@ enumerateMatmulTileRiscv64(TypeRange elementTypes, DictionaryAttr config) {
           TileMxNxK{12, 16, 8}, // IME 3×4 atom grid; primary shape.
           TileMxNxK{8, 16, 8},  // Truncation for narrow M.
           TileMxNxK{4, 16, 8},  // Truncation for narrow M.
-          TileMxNxK{2, 16, 8},  // Truncation for narrow M.
-          TileMxNxK{1, 16, 8},  // Truncation for narrow M.
       };
     }
     // Standard RVV widening multiply-accumulate.

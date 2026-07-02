@@ -155,7 +155,13 @@ completes successfully but produces binaries **without** the IME tile function.
 ```sh
 cmake -G Ninja -B build-host \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DCMAKE_INSTALL_PREFIX=build-host/install
+  -DCMAKE_INSTALL_PREFIX=build-host/install \
+    -DIREE_ENABLE_ASSERTIONS=ON \
+    -DIREE_ENABLE_SPLIT_DWARF=ON \
+    -DIREE_ENABLE_THIN_ARCHIVES=ON \
+    -DCMAKE_C_COMPILER=/usr/bin/clang-14 \
+    -DCMAKE_CXX_COMPILER=/usr/bin/clang++-14 \
+    -DIREE_ENABLE_LLD=ON
 cmake --build build-host --target install
 ```
 
