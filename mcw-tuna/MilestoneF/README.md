@@ -4,9 +4,6 @@ Quantifies the performance gain of the SpaceMiT IME (`vmadot`) microkernel
 implemented in Milestones C/D over the plain RVV vectorised codegen path
 across six realistic `s8s8s32` matmul shapes.
 
-Requires Milestones [C](../MilestoneC/README.md) and [D](../MilestoneD/README.md)
-(IME ukernel registered in runtime; compiler emits IME tile for `+xsmtvdot`).
-
 Covers issue [#24576](https://github.com/iree-org/iree/issues/24576) tasks **F1–F4**.
 
 ---
