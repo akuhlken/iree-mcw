@@ -3,13 +3,14 @@
 Validates the full compiler → runtime → hardware path for data-tiled `s8s8s32`
 matmul on SpaceMiT K1 (BPI-F3 / Milk-V Jupiter). Requires Milestones
 [C](../MilestoneC/README.md) and [D](../MilestoneD/README.md). Covers issue
-[#24576](https://github.com/iree-org/iree/issues/24576) tasks **E1–E2**.
+[#24576](https://github.com/iree-org/iree/issues/24576) tasks **E1–E3**.
 
 
 | Task   | Where                        | Pass condition                                                                                                |
 | ------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | **E1** | Host (`iree-compile`)        | `iree_codegen.ukernel.generic "iree_uk_mmt4d"` with tile **M0=12, N0=16, K0=8** — not RVV fallback (`7×32×1`) |
 | **E2** | Board (Cluster-0, cores 0–3) | `iree-run-module` output **bit-exact** vs reference                                                           |
+| **E3** | CI / host build system       | `riscv_64:ime:+v,+zvl256b,+xsmtvdot` variant present in `e2e_matmul_cpu_dt_i8_i32` and `e2e_matmul_cpu_dt_uk_i8_i32`; stock-QEMU run exercises plumbing in fallback mode |
 
 
 The issue text says `iree_codegen.ukernel.mmt4d`; the lowered op is
@@ -181,3 +182,32 @@ IREE_CPU_FORCE_RISCV_64_XSMTVDOT=1 taskset -c 0-3 \
 - [x] Step 4: three input dirs with `.bin` files
 - [x] Step 5: vmfb, bins, and `iree-run-module` on board
 - [x] Step 6: all three `iree-run-module` runs exit 0
+- [x] Step 7 (E3): `riscv_64:ime` variant added to `e2e_matmul_cpu_dt_i8_i32` and `e2e_matmul_cpu_dt_uk_i8_i32`
+
+---
+
+
+
+### Step 7 — E3: Register the IME variant in the e2e test suite
+
+**Files changed:**
+- `tests/e2e/matmul/CMakeLists.txt` — added `"riscv_64:ime:+v,+zvl256b,+xsmtvdot"` to `TARGET_CPU_FEATURES_VARIANTS` in both `e2e_matmul_cpu_dt_i8_i32` and `e2e_matmul_cpu_dt_uk_i8_i32`.
+- `tests/e2e/matmul/BUILD.bazel` — added `"riscv_64:ime:+v,+zvl256b,+xsmtvdot"` to the `i8/i32` branch of the `target_cpu_features_variants` comprehension covering both `dt` and `dt_uk` rules.
+
+**What each variant does:**
+
+| Test rule | `noriscv` label | Behaviour on stock RISC-V QEMU CI |
+| --- | --- | --- |
+| `e2e_matmul_cpu_dt_i8_i32_llvm-cpu_local-task_ime` | yes (skipped on RISC-V CI) | Plumbing test for cross-compile + real-hardware runs |
+| `e2e_matmul_cpu_dt_uk_i8_i32_llvm-cpu_local-task_ime` | no | Runs on RISC-V CI; ukernel falls back to generic on stock QEMU (IME not emulated); exercises the full compile→run path |
+
+**To verify locally (host build, cross-compiling for RISC-V):**
+
+```sh
+# Configure a RISC-V cross build with xsmtvdot enabled and IREE_ARCH=riscv_64.
+# The cmake test system will generate test names ending in _ime for the new variant.
+ctest -R "e2e_matmul_cpu_dt_uk_i8_i32.*_ime" -V
+```
+
+On real BPI-F3 hardware the `_ime` variant actually exercises `vmadot` (requires
+`taskset -c 0-3`; see Step 6 / issue §Optional 2).
