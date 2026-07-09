@@ -52,6 +52,14 @@ SHAPES=(
   llm_decode
   llm_prefill
   non_aligned
+  small_aligned_8
+  medium_aligned_8
+  large_aligned_8
+  non_aligned_9
+  small_aligned_4
+  medium_aligned_4
+  large_aligned_4
+  non_aligned_5
 )
 
 echo "iree-compile: $IREE_COMPILE"

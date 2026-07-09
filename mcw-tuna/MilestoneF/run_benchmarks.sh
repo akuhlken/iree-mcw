@@ -42,6 +42,14 @@ SHAPE_NAMES=(
   llm_decode
   llm_prefill
   non_aligned
+  small_aligned_8
+  medium_aligned_8
+  large_aligned_8
+  non_aligned_9
+  small_aligned_4
+  medium_aligned_4
+  large_aligned_4
+  non_aligned_5
 )
 
 declare -A SHAPE_DIMS=(
@@ -51,6 +59,14 @@ declare -A SHAPE_DIMS=(
   [llm_decode]="12 4096 4096"
   [llm_prefill]="384 4096 4096"
   [non_aligned]="100 100 100"
+  [small_aligned_8]="8 64 128"
+  [medium_aligned_8]="8 256 512"
+  [large_aligned_8]="8 512 1024"
+  [non_aligned_9]="9 100 100"
+  [small_aligned_4]="4 64 128"
+  [medium_aligned_4]="4 256 512"
+  [large_aligned_4]="4 512 1024"
+  [non_aligned_5]="5 100 100"
 )
 
 # ---------------------------------------------------------------------------
