@@ -2,7 +2,8 @@
 
 Quantifies the performance gain of the SpaceMiT IME (`vmadot`) microkernel
 implemented in Milestones C/D over the plain RVV vectorised codegen path
-across six realistic `s8s8s32` matmul shapes.
+across nine realistic `s8s8s32` matmul shapes (six zero-init + three
+accumulate).
 
 Covers issue [#24576](https://github.com/iree-org/iree/issues/24576) tasks **F1–F4**.
 
@@ -31,6 +32,14 @@ Covers issue [#24576](https://github.com/iree-org/iree/issues/24576) tasks **F1�
 | `llm_decode` | 12 | 4096 | 4096 | Narrow-M / single-token decode |
 | `llm_prefill` | 384 | 4096 | 4096 | Batched prefill; highest abs. GOPS |
 | `non_aligned` | 100 | 100 | 100 | Non-tile-aligned; exercises padding |
+| `small_accumulate` | 96 | 64 | 128 | Same as `small_aligned`; live C (`C += A×B`) |
+| `medium_accumulate` | 384 | 256 | 512 | Same as `medium_aligned`; live C |
+| `llm_decode_accumulate` | 12 | 4096 | 4096 | Same as `llm_decode`; live C + deep K1 |
+
+Zero-init shapes use `linalg.fill` then matmul (ukernel clear-acc path).
+Accumulate shapes take `%acc` as an input so the compiler keeps
+`IREE_UK_FLAG_MMT4D_ACCUMULATE` and the kernel runs `ime_gather_acc`.
+No M0-truncation benches (truncations were not implemented).
 
 ---
 
@@ -44,6 +53,9 @@ Covers issue [#24576](https://github.com/iree-org/iree/issues/24576) tasks **F1�
 | `bench_llm_decode.mlir` | MLIR for narrow-M decode shape |
 | `bench_llm_prefill.mlir` | MLIR for batched prefill shape |
 | `bench_non_aligned.mlir` | MLIR for non-aligned shape |
+| `bench_small_accumulate.mlir` | Small shape, accumulate into live C |
+| `bench_medium_accumulate.mlir` | Medium shape, accumulate into live C |
+| `bench_llm_decode_accumulate.mlir` | Decode shape, accumulate into live C |
 | `compile_benchmarks.sh` | Cross-compile all shapes × 2 variants → `/tmp/bench_f/*.vmfb` |
 | `deploy_board.sh` | Copy VMFBs + binary to board over SSH |
 | `run_benchmarks.sh` | Run benchmarks on board (Cluster-0), save JSON |
@@ -83,7 +95,7 @@ ssh bananapi "uname -m"   # expect: riscv64
 bash mcw-tuna/MilestoneF/compile_benchmarks.sh
 ```
 
-Produces **12 files** in `/tmp/bench_f/`:
+Produces **18 files** in `/tmp/bench_f/`:
 - `{shape}_ime.vmfb` — compiled with `+xsmtvdot` (vmadot microkernel)
 - `{shape}_rvv.vmfb` — compiled without `+xsmtvdot` (RVV codegen baseline)
 
@@ -115,7 +127,7 @@ bash mcw-tuna/MilestoneF/deploy_board.sh bananapi
 ```
 
 Copies to `bananapi:~/bench_f/`:
-- All 12 VMFBs
+- All 18 VMFBs
 - `iree-benchmark-module` (RISC-V binary)
 - `run_benchmarks.sh`
 
@@ -169,8 +181,11 @@ large_aligned           768    512   1024        x.xx       x.xx       x.xxx    
 llm_decode               12   4096   4096        x.xx       x.xx       x.xxx      x.xxx     x.xxX
 llm_prefill             384   4096   4096        x.xx       x.xx       x.xxx      x.xxx     x.xxX
 non_aligned             100    100    100        x.xx       x.xx       x.xxx      x.xxx     x.xxX
+small_accumulate         96     64    128        x.xx       x.xx       x.xxx      x.xxx     x.xxX
+medium_accumulate       384    256    512        x.xx       x.xx       x.xxx      x.xxx     x.xxX
+llm_decode_accumulate    12   4096   4096        x.xx       x.xx       x.xxx      x.xxx     x.xxX
 
-Geometric mean speedup (IME / RVV): x.xxX  (over 6 shapes)
+Geometric mean speedup (IME / RVV): x.xxX  (over 9 shapes)
 ```
 
 **GOPS** = `2·M·N·K / time_s / 1e9` (one multiply + one accumulate = 2 ops per MAC).
@@ -179,7 +194,10 @@ Geometric mean speedup (IME / RVV): x.xxX  (over 6 shapes)
 PR #23734 reported ~4× for RVV i8 over scalar codegen; the IME path is
 expected to improve on that. The `llm_prefill` shape (large, tile-aligned,
 compute-bound) should show the best absolute GOPS. The `non_aligned` and
-`llm_decode` shapes expose partial-tile overhead.
+`llm_decode` shapes expose partial-tile overhead. Accumulate shapes should
+be close to their zero-init twins (gather/scatter is O(M0·N0) per tile vs
+O(K1) vmadot work); a large gap vs the matching `*_aligned` / `llm_decode`
+row usually means the ACCUMULATE path is broken or not selected.
 
 ---
 
@@ -199,7 +217,8 @@ compute-bound) should show the best absolute GOPS. The `non_aligned` and
 ## Success checklist (F1–F4)
 
 - [ ] **F1** — `compile_benchmarks.sh` completes; sanity-check IR shows IME tile
-- [ ] **F2** — `run_benchmarks.sh` completes on board; 12 JSON files produced
+- [ ] **F2** — `run_benchmarks.sh` completes on board; 18 JSON files produced
 - [ ] **F3** — `compare_results.py` prints a complete table; speedup > 1× for all aligned shapes
 - [ ] **F4** — `llm_prefill` speedup substantially exceeds `non_aligned` (confirms tile-alignment matters)
 - [ ] **F5** — Cluster-0 affinity (`taskset -c 0-3` + `--task_topology_cpu_ids=0,1,2,3`) used for every run (F4 workaround documented in issue §Optional 2)
+- [ ] **Accumulate** — `*_accumulate` rows complete; IME GOPS within ~noise of matching zero-init shapes

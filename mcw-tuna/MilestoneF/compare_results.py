@@ -28,12 +28,16 @@ import sys
 # Shape registry (must match bench_*.mlir and run_benchmarks.sh).
 # ---------------------------------------------------------------------------
 SHAPES = [
-    ("small_aligned",  96,   64,   128),
-    ("medium_aligned", 384,  256,  512),
-    ("large_aligned",  768,  512,  1024),
-    ("llm_decode",     12,   4096, 4096),
-    ("llm_prefill",    384,  4096, 4096),
-    ("non_aligned",    100,  100,  100),
+    ("small_aligned",           96,   64,   128),
+    ("medium_aligned",         384,  256,  512),
+    ("large_aligned",          768,  512,  1024),
+    ("llm_decode",              12,  4096, 4096),
+    ("llm_prefill",            384,  4096, 4096),
+    ("non_aligned",            100,   100,  100),
+    # Accumulate (C += A×B) — ime_gather_acc path; no M0 truncations.
+    ("small_accumulate",        96,   64,   128),
+    ("medium_accumulate",      384,  256,  512),
+    ("llm_decode_accumulate",   12,  4096, 4096),
 ]
 
 # ---------------------------------------------------------------------------
@@ -140,7 +144,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Human-readable table.
     # ------------------------------------------------------------------
-    COL = "{:<20} {:>6} {:>6} {:>6}  {:>10} {:>10}  {:>10} {:>10}  {:>8}"
+    COL = "{:<26} {:>6} {:>6} {:>6}  {:>10} {:>10}  {:>10} {:>10}  {:>8}"
     header = COL.format("shape", "M", "K", "N",
                         "IME ms", "RVV ms",
                         "IME GOPS", "RVV GOPS", "speedup")

@@ -5,7 +5,7 @@
 #   ime: +xsmtvdot enabled  → vmadot microkernel selected
 #   rvv: no +xsmtvdot       → plain RVV vectorised codegen (fallback baseline)
 #
-# Output: /tmp/bench_f/{shape}_{ime,rvv}.vmfb  (12 files total)
+# Output: /tmp/bench_f/{shape}_{ime,rvv}.vmfb  (18 files total)
 #
 # Prerequisites:
 #   build-host/install/bin/iree-compile must exist (host build with RISC-V target).
@@ -52,6 +52,10 @@ SHAPES=(
   llm_decode
   llm_prefill
   non_aligned
+  # Accumulate (C += A×B) — exercises ime_gather_acc; no M0 truncations.
+  small_accumulate
+  medium_accumulate
+  llm_decode_accumulate
 )
 
 echo "iree-compile: $IREE_COMPILE"

@@ -9,6 +9,8 @@
 #     IME instructions only exist on Cluster-0; running on Cluster-1 traps.
 #   - IREE_CPU_FORCE_RISCV_64_XSMTVDOT=1 forces the runtime tile-selector to
 #     pick the vmadot kernel even when /proc/cpuinfo carries no IME flag.
+#   - *_accumulate shapes pass a live C tensor (C += A×B) so the ukernel
+#     ACCUMULATE / ime_gather_acc path is exercised. No M0-truncation cases.
 #
 # Usage (after deploy_board.sh):
 #   bash ~/bench_f/run_benchmarks.sh
@@ -42,6 +44,9 @@ SHAPE_NAMES=(
   llm_decode
   llm_prefill
   non_aligned
+  small_accumulate
+  medium_accumulate
+  llm_decode_accumulate
 )
 
 declare -A SHAPE_DIMS=(
@@ -51,7 +56,14 @@ declare -A SHAPE_DIMS=(
   [llm_decode]="12 4096 4096"
   [llm_prefill]="384 4096 4096"
   [non_aligned]="100 100 100"
+  [small_accumulate]="96 64 128"
+  [medium_accumulate]="384 256 512"
+  [llm_decode_accumulate]="12 4096 4096"
 )
+
+is_accumulate() {
+  [[ "$1" == *_accumulate ]]
+}
 
 # ---------------------------------------------------------------------------
 echo "=== Milestone F benchmark run ==="
@@ -78,7 +90,17 @@ run_variant() {
     env_extra=(env IREE_CPU_FORCE_RISCV_64_XSMTVDOT=1)
   fi
 
-  printf "  %-22s %-3s  M=%-4d K=%-5d N=%-5d ... " \
+  local function=matmul
+  local inputs=(
+    --input="${M}x${K}xi8"
+    --input="${K}x${N}xi8"
+  )
+  if is_accumulate "$shape"; then
+    function=matmul_accumulate
+    inputs+=(--input="${M}x${N}xi32")
+  fi
+
+  printf "  %-26s %-3s  M=%-4d K=%-5d N=%-5d ... " \
     "$shape" "$variant" "$M" "$K" "$N"
 
   taskset -c 0-3 \
@@ -87,9 +109,8 @@ run_variant() {
       --device=local-task \
       --task_topology_cpu_ids=0,1,2,3 \
       --module="$vmfb" \
-      --function=matmul \
-      --input="${M}x${K}xi8" \
-      --input="${K}x${N}xi8" \
+      --function="$function" \
+      "${inputs[@]}" \
       --benchmark_min_time="$BENCH_MIN_TIME" \
       --benchmark_format=json \
       --benchmark_out="$out_json" \
