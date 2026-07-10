@@ -1045,12 +1045,9 @@ enumerateMatmulTileRiscv64(TypeRange elementTypes, DictionaryAttr config) {
     // SpaceMiT IME (vmadot): fixed tile shape derived from the 4×4×8 atom.
     // M0=12 (3×4 atom grid) matches the registered runtime ukernel tile.
     // N0=16, K0=8 are hardware constants; do not use the vlen formula here.
-    // M-truncations let the compiler handle M dims not divisible by 12.
     if (hasFeature(config, "+xsmtvdot")) {
       return {
-          TileMxNxK{12, 16, 8}, // IME 3×4 atom grid; primary shape.
-          TileMxNxK{8, 16, 8},  // Truncation for narrow M.
-          TileMxNxK{4, 16, 8},  // Truncation for narrow M.
+          TileMxNxK{12, 16, 8}, // IME 3×4 atom grid.
       };
     }
     // Standard RVV widening multiply-accumulate.

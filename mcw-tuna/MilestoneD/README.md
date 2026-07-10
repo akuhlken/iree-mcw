@@ -15,7 +15,7 @@ Tasks **D1–D5** of issue
 
 | Piece | Value |
 | ----- | ----- |
-| Compiler tile (`enumerateMatmulTileRiscv64`) | `{12, 16, 8}` + M-truncations `{8,4,2,1}×16×8` |
+| Compiler tile (`enumerateMatmulTileRiscv64`) | `{12, 16, 8}` only |
 | Runtime tile row (`mmt4d_riscv_64_tiles.inl`) | `s8, s8, s32, 12, 8, _xsmtvdot` |
 | Feature gate | `+v` and `+xsmtvdot` in `cpu_features` |
 | Default ukernels (`+xsmtvdot` only) | `mmt4d` (no explicit `--iree-llvmcpu-enable-ukernels=mmt4d`) |
@@ -36,10 +36,9 @@ In `enumerateMatmulTileRiscv64`, the `i8×i8→i32` branch gated on `+xsmtvdot`
 returns:
 
 ```cpp
-TileMxNxK{12, 16, 8},  // primary — 3×4 vmadot atom grid
-TileMxNxK{8,  16, 8},  // M-truncations for narrow M
-TileMxNxK{4,  16, 8},
+TileMxNxK{12, 16, 8},  // IME 3×4 vmadot atom grid
 ```
+
 
 Without `+xsmtvdot`, the existing RVV widening path (`M0=7, K0=1, N0=vlen/8`)
 is unchanged.
