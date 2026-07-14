@@ -1046,9 +1046,7 @@ enumerateMatmulTileRiscv64(TypeRange elementTypes, DictionaryAttr config) {
     // M0=12 (3×4 atom grid) matches the registered runtime ukernel tile.
     // N0=16, K0=8 are hardware constants; do not use the vlen formula here.
     if (hasFeature(config, "+xsmtvdot")) {
-      return {
-          TileMxNxK{12, 16, 8}, // IME 3×4 atom grid.
-      };
+      return {TileMxNxK{12, 16, 8}};  // IME 3×4 atom grid.
     }
     // Standard RVV widening multiply-accumulate.
     // Widening chain: i8(m1) -> i16(m2) -> i32(m4).

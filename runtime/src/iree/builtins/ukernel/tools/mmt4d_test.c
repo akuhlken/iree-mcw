@@ -532,8 +532,8 @@ static void iree_uk_test_mmt4d(iree_uk_uint32_t flags, int M0, int N0, int K0,
   // currently an implementation detail within each arch/ subdirectory.
   flags |= IREE_UK_FLAG_MMT4D_ALLOW_GENERIC_FALLBACK_TILE_FUNCTION;
   // Test narrowed, power-of-two values of M0, as mmt4d kernels tend to have
-  // narrow variants for handling these cases. xsmtvdot only supports M0=12.
-  if (memcmp(cpu_features, "xsmtvdot", sizeof *cpu_features) != 0) {
+  // narrow variants for handling these cases. xsmtvdot has no narrow variants.
+  if (memcmp(cpu_features, "xsmtvdot", 8) != 0) {
     for (int narrowM0 = 1; narrowM0 < M0; narrowM0 *= 2) {
       iree_uk_test_mmt4d_impl(flags, narrowM0, N0, K0, cpu_features);
     }

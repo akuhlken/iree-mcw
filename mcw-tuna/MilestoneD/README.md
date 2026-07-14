@@ -15,7 +15,7 @@ Tasks **D1–D5** of issue
 
 | Piece | Value |
 | ----- | ----- |
-| Compiler tile (`enumerateMatmulTileRiscv64`) | `{12, 16, 8}` only |
+| Compiler tile (`enumerateMatmulTileRiscv64`) | `{12, 16, 8}` |
 | Runtime tile row (`mmt4d_riscv_64_tiles.inl`) | `s8, s8, s32, 12, 8, _xsmtvdot` |
 | Feature gate | `+v` and `+xsmtvdot` in `cpu_features` |
 | Default ukernels (`+xsmtvdot` only) | `mmt4d` (no explicit `--iree-llvmcpu-enable-ukernels=mmt4d`) |
@@ -36,7 +36,7 @@ In `enumerateMatmulTileRiscv64`, the `i8×i8→i32` branch gated on `+xsmtvdot`
 returns:
 
 ```cpp
-TileMxNxK{12, 16, 8},  // IME 3×4 vmadot atom grid
+TileMxNxK{12, 16, 8},  // primary — 3×4 vmadot atom grid
 ```
 
 
