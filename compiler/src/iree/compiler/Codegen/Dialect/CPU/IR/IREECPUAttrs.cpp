@@ -374,6 +374,14 @@ getRowMajorTilesMNKShape(MMAIntrinsic intrinsic) {
   // ACC tile has a non-row-major layout, hand-rolled in `getIntrinsicSwizzle`.
   case MMAIntrinsic::MMA_X86_AVX512VNNI_16x16x2_I32_I8_CASTI16:
     return Tuple{16, 16, 2};
+  // Arm NEON `fmla` is fixed-width (128-bit), so the 4-lane dim is static and
+  // the regular row-major swizzle path in `getIntrinsicSwizzle` handles it.
+  // (SVE deliberately does *not* go through this function: its tile carries a
+  // symbolic scalable dim and is hand-rolled in `getIntrinsicSwizzle`.)
+  case MMAIntrinsic::MMA_ARM_NEON_FMLA_1x4x1_F32_F32:
+    return Tuple{1, 4, 1};
+  case MMAIntrinsic::MMA_ARM_NEON_FMLA_4x1x1_F32_F32:
+    return Tuple{4, 1, 1};
   default:
     if (isGenericScalar(intrinsic)) {
       return Tuple{1, 1, 1};
@@ -393,6 +401,7 @@ constexpr uint32_t kMMAIntrinsicISAGeneric = 0xF000;
 constexpr uint32_t kMMAIntrinsicGenericBudgetMask = 0x00FF;
 constexpr uint32_t kMMAIntrinsicISAX86Avx2 = 0x1200;
 constexpr uint32_t kMMAIntrinsicISAX86Avx512 = 0x1300;
+constexpr uint32_t kMMAIntrinsicISAArmNeon = 0x2100;
 constexpr uint32_t kMMAIntrinsicISAArmSve = 0x2200;
 
 bool isGenericScalar(MMAIntrinsic intr) {
@@ -419,6 +428,8 @@ int64_t getRegisterSpaceBytes(MMAIntrinsic intrinsic) {
     return 16 * 32;
   case kMMAIntrinsicISAX86Avx512: // 32 ZMM × 64 B.
     return 32 * 64;
+  case kMMAIntrinsicISAArmNeon: // 32 Q × 16 B.
+    return 32 * 16;
   case kMMAIntrinsicISAArmSve: // 32 Z × (VL treated as 128 bits).
     return 32 * 16;
   default:
@@ -616,6 +627,9 @@ std::tuple<Type, Type, Type> getABCElementTypes(MLIRContext *ctx,
   case MMAIntrinsic::MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32:
   case MMAIntrinsic::MMA_ARM_SVE_FMLA_4VLx1x1_F32_F32:
     return {f32, f32, f32};
+  case MMAIntrinsic::MMA_ARM_NEON_FMLA_1x4x1_F32_F32:
+  case MMAIntrinsic::MMA_ARM_NEON_FMLA_4x1x1_F32_F32:
+    return {f32, f32, f32};
   default:
     return {Type(), Type(), Type()};
   }
@@ -780,6 +794,42 @@ static Value lowerX86Avx512Vnni16x16x2I8(OpBuilder &b, Location loc, Value lhs,
   return result;
 }
 
+// Lowers one `llvm.aarch64.sve.fmla` intrinsic: an in‑place floating‑point
+// fused multiply‑accumulate operation for SVE scalable vector.
+//
+// Operands:
+//   `a`:            vector<[4]xf32>, multiplier‑left vector tile (matrix A)
+//   `b`:            vector<[4]xf32>, multiplier‑right vector tile (matrix B)
+//   `acc`:          vector<[4]xf32>, accumulator register, holds previous sum
+//
+// Computation: acc = a * b + acc
+// Emits SVE assembly: fmla Zd.S, Pg/M, Zn.S, Zm.S
+static Value lowerAArch64SveFmlaf32(OpBuilder &builder, Location loc,
+                                          Value a, Value b, Value acc) {
+  auto accType = cast<VectorType>(acc.getType());
+
+  // Predicate mask scalable‑vector type: <vscale x 4 x i1>, same shape and
+  // scalable dims as the f32 vectors. An undef predicate gives identity merge
+  // (/m with all lanes active), matching the inner_tiled accumulation pattern
+  // where every lane participates.
+  auto predType = VectorType::get(accType.getShape(), builder.getI1Type(),
+                                  accType.getScalableDims());
+  Value undefPred = LLVM::UndefOp::create(builder, loc, predType).getResult();
+
+  // Call the SVE‑target‑specific fmla intrinsic directly.
+  // <vscale x 4 x float> @llvm.aarch64.sve.fmla(predicate, acc, a, b)
+  // computes acc = acc + a * b, merging lanes where predicate is false.
+  Value fmlaResult =
+      LLVM::CallIntrinsicOp::create(
+          builder, loc, accType,
+          builder.getStringAttr("llvm.aarch64.sve.fmla"),
+          ValueRange{undefPred, acc, a, b})
+          .getResult(0);
+
+  return fmlaResult;
+}
+
+
 // Lowers a MMAIntrinsic to a llvm.call_intrinsic op, plus any necessary
 // additional ops (potentially broadcasting or widening LHS/RHS or creating an
 // add op if the intrinsic isn't already adding the accumulator).
@@ -790,6 +840,43 @@ static Value createCpuMmaIntrinsicCall(OpBuilder &builder, Location loc,
   // shuffle scheme; it bypasses the per-row widen + broadcast path below.
   if (intrinsic == MMAIntrinsic::MMA_X86_AVX512VNNI_16x16x2_I32_I8_CASTI16) {
     return lowerX86Avx512Vnni16x16x2I8(builder, loc, lhs, rhs, acc);
+  }
+  // AArch64 NEON/SVE `fmla`: lower to LLVM's generic vector FMA intrinsic and
+  // let the AArch64 backend select `fmla`. The per-intrinsic fragments are 1-D:
+  // in the natural orientation (1×N×1) the LHS is a single element and the RHS
+  // carries the N lanes, and the M↔N-swapped orientation (N×1×1) mirrors that
+  // onto the RHS. Broadcast the scalar operand up to the vector operand's type
+  // — preserving a scalable `[4]` for SVE — and emit `llvm.fma.v4f32` (NEON)
+  // or `llvm.aarch64.sve.fmla` (SVE).
+  //
+  // This runs before the x86 widen + broadcast machinery below, whose
+  // fixed-width `getNumElements` bookkeeping is undefined for scalable vectors
+  // and would otherwise strip the scalable property.
+  if (intrinsic == MMAIntrinsic::MMA_ARM_NEON_FMLA_1x4x1_F32_F32 ||
+      intrinsic == MMAIntrinsic::MMA_ARM_NEON_FMLA_4x1x1_F32_F32 ||
+      intrinsic == MMAIntrinsic::MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32 ||
+      intrinsic == MMAIntrinsic::MMA_ARM_SVE_FMLA_4VLx1x1_F32_F32) {
+    bool swapped = intrinsic == MMAIntrinsic::MMA_ARM_NEON_FMLA_4x1x1_F32_F32 ||
+                   intrinsic == MMAIntrinsic::MMA_ARM_SVE_FMLA_4VLx1x1_F32_F32;
+    Value scalar = swapped ? rhs : lhs;
+    Value vectorOperand = swapped ? lhs : rhs;
+    auto vectorType = cast<VectorType>(vectorOperand.getType());
+    Value scalarElem = vector::ExtractOp::create(builder, loc, scalar,
+                                                 ArrayRef<int64_t>{0});
+    Value broadcastScalar =
+        vector::BroadcastOp::create(builder, loc, vectorType, scalarElem);
+    Value a = swapped ? vectorOperand : broadcastScalar;
+    Value b = swapped ? broadcastScalar : vectorOperand;
+
+    if (vectorType.isScalable()) {
+      return lowerAArch64SveFmlaf32(builder, loc, a, b, acc);
+    } else {
+      StringRef intrinsicName = "llvm.fma.v4f32";
+      return LLVM::CallIntrinsicOp::create(builder, loc, acc.getType(),
+                                           builder.getStringAttr(intrinsicName),
+                                           ValueRange{a, b, acc})
+            .getResult(0);
+    }
   }
   // Sign-/float-extend a vector to a wider element type. Used by the
   // *_CASTF32 (f16 → f32) and *_CASTI16 (i8 → i16) variants where the
@@ -854,10 +941,10 @@ static Value createCpuMmaIntrinsicCall(OpBuilder &builder, Location loc,
   // separate `vbroadcastss`/`vbroadcastsd` before each FMA, doubling the
   // per-row uop count of the hot inner loop. For K=1 the bitcast pair is a
   // width-preserving no-op LLVM elides.
-  // TODO(24311): Arm's by-element FMA (`fmla.4s vd, vn, vm[idx]`) is exposed
-  // via separate intrinsics (e.g. `llvm.aarch64.neon.fma.lane.v4f32`) that
-  // take `(vector, vector, lane_idx)`; when we add Arm support, those cases
-  // should bypass this replication and emit the lane-index intrinsic directly.
+  //
+  // AArch64 (NEON/SVE) never reaches this replication path: it is handled up
+  // front with a plain `vector.broadcast` + `llvm.fma.*`, and its scalable
+  // (SVE) operand is routed there before any fixed-width bookkeeping runs.
   auto lhsType = cast<VectorType>(lhs.getType());
   auto rhsType = cast<VectorType>(rhs.getType());
   // Tracks whether the broadcast landed on lhs; used by the symmetric

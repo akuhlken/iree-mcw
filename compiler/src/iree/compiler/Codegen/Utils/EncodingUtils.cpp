@@ -133,11 +133,12 @@ FailureOr<SmallVector<OpFoldResult>> getPackedDimsForDispatchTensorImpl(
       linalg::PackOp::getResultShape(builder, loc, targetShape, *innerTileSizes,
                                      encodingInfo.innerDimsPos,
                                      encodingInfo.outerDimsPerm);
-  return getSwizzledShape(convertedTargetShape, encodingInfo);
+  return getSwizzledShape(builder, loc, convertedTargetShape, encodingInfo);
 }
 
 SmallVector<OpFoldResult>
-getSwizzledShape(ArrayRef<OpFoldResult> packedShape,
+getSwizzledShape(OpBuilder &builder, Location loc,
+                 ArrayRef<OpFoldResult> packedShape,
                  IREE::Codegen::MaterializeEncodingInfo encodingInfo) {
   if (packedShape.empty() || !encodingInfo.swizzle) {
     return SmallVector<OpFoldResult>(packedShape);
@@ -150,12 +151,30 @@ getSwizzledShape(ArrayRef<OpFoldResult> packedShape,
   }
 
   SmallVector<OpFoldResult> newShape(packedShape.take_front(srcRank));
-  SmallVector<int64_t> expandedTileShape =
-      IREE::Codegen::getExpandedTileShape(encodingInfo.swizzle->expandShape());
-  MLIRContext *ctx = packedShape[0].getContext();
-  Builder b(ctx);
-  for (int64_t d : expandedTileShape) {
-    newShape.push_back(b.getIndexAttr(d));
+
+  // Lazily-created `vector.vscale`, shared by all scalable dims.
+  Value vscale;
+  auto getVscale = [&]() -> Value {
+    if (!vscale) {
+      vscale = vector::VectorScaleOp::create(builder, loc);
+    }
+    return vscale;
+  };
+
+  using Dim = IREE::Codegen::TileSwizzle::Dim;
+  for (auto group : encodingInfo.swizzle->expandShape()) {
+    for (auto d : group) {
+      bool scalable = d.kind() == Dim::Kind::Internal &&
+                      d.symbolicMultiplier() != Dim::SymbolicMultiplier::One;
+      if (scalable) {
+        auto staticSize = arith::ConstantIndexOp::create(builder, loc, d.size());
+        auto scalableSize =
+            arith::MulIOp::create(builder, loc, staticSize, getVscale());
+        newShape.push_back(scalableSize.getResult());
+      } else {
+        newShape.push_back(builder.getIndexAttr(d.size()));
+      }
+    }
   }
   applyPermutationToVector(newShape, perm);
 

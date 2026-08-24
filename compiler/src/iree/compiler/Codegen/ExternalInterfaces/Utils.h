@@ -210,8 +210,23 @@ public:
           auto swizzle = *encodingInfo.swizzle;
           SmallVector<int64_t> newShape(packedType.getShape().drop_back(
               encodingInfo.innerTileSizes.size()));
-          SmallVector<int64_t> swizzledTileShape =
-              IREE::Codegen::getExpandedTileShape(swizzle.expandShape());
+          // Build the swizzled tile shape, marking scalable dims (e.g. SVE's
+          // `[4]`) as dynamic extents. `getExpandedTileShape` returns their
+          // static minimum size and would silently drop the scalable flag,
+          // producing a fixed-width packed tensor that the inner_tiled
+          // verifier rejects against the scalable MMA tile type.
+          SmallVector<int64_t> swizzledTileShape;
+          for (auto group : swizzle.expandShape()) {
+            for (auto d : group) {
+              bool scalable =
+                  d.kind() ==
+                      IREE::Codegen::TileSwizzle::Dim::Kind::Internal &&
+                  d.symbolicMultiplier() !=
+                      IREE::Codegen::TileSwizzle::Dim::SymbolicMultiplier::One;
+              swizzledTileShape.push_back(scalable ? ShapedType::kDynamic
+                                                   : d.size());
+            }
+          }
           applyPermutationToVector(swizzledTileShape, swizzle.permutation());
           newShape.append(swizzledTileShape);
           return RankedTensorType::get(newShape, packedType.getElementType());

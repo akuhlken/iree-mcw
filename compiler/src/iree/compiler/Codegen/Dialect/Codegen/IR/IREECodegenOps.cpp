@@ -270,6 +270,41 @@ static bool matchTileTypes(RankedTensorType tensorTileType,
   return true;
 }
 
+// Returns true if a *vector* operand's inner tile is compatible with the MMA
+// tile vector type. A vector operand carries scalable flags directly (unlike a
+// tensor operand, which has to infer scalability from dynamic extents), so the
+// two sides are compared dim-by-dim after dropping unit non-scalable dims: the
+// surviving dims must agree in both size and scalable flag.
+static bool matchVectorTileTypes(VectorType operandTile, VectorType mmaType,
+                                 bool opaqueSemantics) {
+  if (operandTile.getElementType() != mmaType.getElementType()) {
+    return false;
+  }
+  if (opaqueSemantics) {
+    // Opaque semantics are only used on GPU. No scalable vectors.
+    return !operandTile.isScalable() && !mmaType.isScalable() &&
+           operandTile.getNumElements() == mmaType.getNumElements();
+  }
+  auto keep = [](int64_t size, bool scalable) { return scalable || size != 1; };
+  SmallVector<int64_t> opShape, mmaShape;
+  SmallVector<bool> opScalable, mmaScalable;
+  for (auto [size, scalable] :
+       llvm::zip_equal(operandTile.getShape(), operandTile.getScalableDims())) {
+    if (keep(size, scalable)) {
+      opShape.push_back(size);
+      opScalable.push_back(scalable);
+    }
+  }
+  for (auto [size, scalable] :
+       llvm::zip_equal(mmaType.getShape(), mmaType.getScalableDims())) {
+    if (keep(size, scalable)) {
+      mmaShape.push_back(size);
+      mmaScalable.push_back(scalable);
+    }
+  }
+  return opShape == mmaShape && opScalable == mmaScalable;
+}
+
 static LogicalResult verifyOperandTypes(InnerTiledOp tiledOp) {
   SmallVector<VectorType> mmaVectorTypes;
   tiledOp.getSemantics().getTileTypes(tiledOp.getKind(), mmaVectorTypes);
@@ -283,11 +318,6 @@ static LogicalResult verifyOperandTypes(InnerTiledOp tiledOp) {
     ShapedType operandShapedType = cast<ShapedType>(opType);
     Type operandElemType = operandShapedType.getElementType();
 
-    ArrayRef<int64_t> operandShape = operandShapedType.getShape();
-    ArrayRef<int64_t> operandTileShape(
-        operandShape.drop_front(map.getNumResults()));
-    auto tensorTileType =
-        RankedTensorType::get(operandTileShape, operandElemType);
     SmallVector<int64_t> mmaShape(mmaVectorType.getShape());
     SmallVector<bool> mmaScalable(mmaVectorType.getScalableDims());
     std::optional<ArrayAttr> permutations = tiledOp.getPermutations();
@@ -300,6 +330,26 @@ static LogicalResult verifyOperandTypes(InnerTiledOp tiledOp) {
     auto vectorType =
         VectorType::get(mmaShape, mmaVectorType.getElementType(), mmaScalable);
 
+    int64_t outerRank = map.getNumResults();
+    if (auto operandVectorType = dyn_cast<VectorType>(opType)) {
+      // Vector operand: compare vector-to-vector so the operand's scalable
+      // flags (e.g. SVE's `[4]`) are preserved. Rebuilding a `RankedTensorType`
+      // from `getShape()` here would drop them, turning a scalable
+      // `vector<[4]xf32>` into a static `tensor<4xf32>`.
+      auto operandTileType = VectorType::get(
+          operandVectorType.getShape().drop_front(outerRank), operandElemType,
+          operandVectorType.getScalableDims().drop_front(outerRank));
+      if (!matchVectorTileTypes(operandTileType, vectorType, opaque)) {
+        return tiledOp.emitOpError()
+               << "operand #" << index << " inner tile " << operandTileType
+               << " is incompatible with expected MMA tile type " << vectorType;
+      }
+      continue;
+    }
+    ArrayRef<int64_t> operandShape = operandShapedType.getShape();
+    ArrayRef<int64_t> operandTileShape(operandShape.drop_front(outerRank));
+    auto tensorTileType =
+        RankedTensorType::get(operandTileShape, operandElemType);
     if (!matchTileTypes(tensorTileType, vectorType, opaque)) {
       return tiledOp.emitOpError()
              << "operand #" << index << " inner tile " << tensorTileType

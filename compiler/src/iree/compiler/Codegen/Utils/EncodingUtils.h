@@ -40,9 +40,13 @@ FailureOr<SmallVector<OpFoldResult>> getPackedDimsForDispatchTensorImpl(
     ValueRange dynamicDims, IREE::Encoding::LayoutMaterializerAttr layoutAttr,
     IREE::Codegen::MaterializeEncodingInfo encodingInfo);
 
-/// Applies an returns a tile-swizzling permutation to a packed shape.
+/// Applies and returns a tile-swizzling permutation to a packed shape.
+/// `builder` and `loc` are used to emit `vector.vscale` multiplications for
+/// scalable swizzle dims (e.g. SVE's `[4]`), which must materialize as dynamic
+/// extents in the packed tensor rather than their static minimum sizes.
 SmallVector<OpFoldResult>
-getSwizzledShape(ArrayRef<OpFoldResult> packedShape,
+getSwizzledShape(OpBuilder &builder, Location loc,
+                 ArrayRef<OpFoldResult> packedShape,
                  IREE::Codegen::MaterializeEncodingInfo encodingInfo);
 
 } // namespace mlir::iree_compiler

@@ -26,7 +26,11 @@ bool incrementIndices(MutableArrayRef<int64_t> indices,
 }
 
 // Flattens vector `value` to 1-D if its rank is greater than 1; otherwise
-// returns it unchanged.
+// returns it unchanged. Fixed-width only: it builds the flat type from the
+// integer element count, which is undefined for scalable vectors. Callers with
+// scalable vectors must use the scalable branch in
+// `distributeMmaFragmentToIntrinsics` (which shape_casts away unit dims while
+// preserving scalable flags) instead.
 static Value flattenVector(OpBuilder &builder, Location loc, Value value) {
   auto vectorType = cast<VectorType>(value.getType());
   if (vectorType.getRank() <= 1) {
@@ -40,34 +44,78 @@ static Value flattenVector(OpBuilder &builder, Location loc, Value value) {
 SmallVector<Value>
 distributeMmaFragmentToIntrinsics(OpBuilder &builder, Location loc, Value value,
                                   const TileSwizzle &swizzle) {
-  auto internalShape = sliceSwizzledShape(swizzle, [](TileSwizzle::Dim dim) {
-    return dim.kind() == TileSwizzle::Dim::Kind::Internal;
-  });
+  Type elemType = cast<VectorType>(value.getType()).getElementType();
+  auto internalType = getTileVectorType(swizzle, elemType,
+                                        [](TileSwizzle::Dim dim) {
+                                          return dim.kind() ==
+                                                 TileSwizzle::Dim::Kind::Internal;
+                                        });
+  auto internalShape = internalType.getShape();
   auto crossIntrinsicShape =
       sliceSwizzledShape(swizzle, [](TileSwizzle::Dim dim) {
         return dim.kind() == TileSwizzle::Dim::Kind::CrossIntrinsic;
       });
+  bool hasScalable =
+      llvm::any_of(internalType.getScalableDims(),
+                   [](bool b) { return b; });
   int rank = internalShape.size();
   SmallVector<int64_t> indices(rank, 0);
   SmallVector<int64_t> strides(rank, 1);
   SmallVector<Value> distributedValues;
   do {
-    Value extract = vector::ExtractStridedSliceOp::create(
-        builder, loc, value, indices, internalShape, strides);
-    distributedValues.push_back(flattenVector(builder, loc, extract));
+    if (hasScalable) {
+      // Scalable-safe extraction. The distributed value's cross-intrinsic dims
+      // are all leading (fixed), and the internal dims — including the scalable
+      // one — follow (see the comment above `fullDistributedType`). Peel the
+      // leading cross-intrinsic dims with a single `vector.extract` to obtain
+      // the internal tile (e.g. `vector<[4]x1xf32>` for SVE), then `shape_cast`
+      // away the non-scalable unit dims to yield the per-intrinsic scalable
+      // fragment (`vector<[4]xf32>`). The fixed-width `ExtractStridedSliceOp`
+      // path below cannot produce a scalable result, so this branch exists
+      // specifically for SVE/RVV.
+      int numCrossIntrinsic = 0;
+      for (int64_t size : crossIntrinsicShape) {
+        numCrossIntrinsic += (size > 1);
+      }
+      SmallVector<int64_t> pos;
+      for (int d = 0; d < numCrossIntrinsic; ++d) {
+        pos.push_back(indices[d]);
+      }
+      Value piece = vector::ExtractOp::create(builder, loc, value, pos);
+      auto pieceType = cast<VectorType>(piece.getType());
+      SmallVector<int64_t> fragShape;
+      SmallVector<bool> fragScalable;
+      ArrayRef<int64_t> pieceShape = pieceType.getShape();
+      ArrayRef<bool> pieceScalable = pieceType.getScalableDims();
+      for (unsigned i = 0; i < pieceShape.size(); ++i) {
+        if (pieceScalable[i] || pieceShape[i] != 1) {
+          fragShape.push_back(pieceShape[i]);
+          fragScalable.push_back(pieceScalable[i]);
+        }
+      }
+      auto fragType = VectorType::get(fragShape, elemType, fragScalable);
+      if (pieceType != fragType) {
+        piece = vector::ShapeCastOp::create(builder, loc, fragType, piece);
+      }
+      distributedValues.push_back(piece);
+    } else {
+      Value extract = vector::ExtractStridedSliceOp::create(
+          builder, loc, value, indices, internalShape, strides);
+      distributedValues.push_back(flattenVector(builder, loc, extract));
+    }
   } while (incrementIndices(indices, crossIntrinsicShape));
   return distributedValues;
 }
 
-// Returns the swizzle's distributed N-D shape: every dim concatenated in
-// expandShape order (then permuted), with CrossThread dims collapsed to size
-// 1. This matches GPU's `DataTiledMMAInterfaceAttr::getDistributedTileTypes`
-// (cross-thread factors live in the lane id, not the per-thread vector) and
-// is also the rank/shape that `distributeMmaFragmentToIntrinsics` expects to
-// index every cross-intrinsic dim. For CPU there are no CrossThread dims, so
-// this is the full expanded shape.
-static SmallVector<int64_t> fullDistributedShape(const TileSwizzle &swizzle) {
-  return sliceSwizzledShape(swizzle, [](TileSwizzle::Dim d) {
+// Returns the swizzle's distributed N-D vector type, preserving the scalable
+// flags carried by `Internal` dims with a symbolic multiplier (e.g. SVE's
+// `ArmSveVLIn128bitUnits`, RVV's `RiscvVlenIn64bitUnits`). A plain
+// `VectorType::get(shape, ...)` over `fullDistributedShape` would silently
+// drop those flags, converting a scalable `vector<1x[4]xf32>` into a
+// fixed-width `vector<1x4xf32>`.
+static VectorType fullDistributedType(const TileSwizzle &swizzle,
+                                      Type elemType) {
+  return getTileVectorType(swizzle, elemType, [](TileSwizzle::Dim d) {
     return d.kind() != TileSwizzle::Dim::Kind::CrossThread;
   });
 }
@@ -80,16 +128,16 @@ static SmallVector<int64_t> fullDistributedShape(const TileSwizzle &swizzle) {
 // distributed N-D form; this reshape lets the shared lowering body operate
 // uniformly. Both sides apply the swizzle's permutation (CPU's permutation is
 // always identity, see `IREECPUAttrs.cpp:getSwizzle`), so a plain `shape_cast`
-// suffices — no transpose is needed.
+// suffices — no transpose is needed. Scalable dims are preserved via
+// `fullDistributedType` so the resulting vector keeps its scalable flags.
 static Value reshapeToSwizzleDistributed(OpBuilder &builder, Location loc,
                                          Value value,
                                          const TileSwizzle &swizzle) {
   auto vecType = cast<VectorType>(value.getType());
-  SmallVector<int64_t> fullShape = fullDistributedShape(swizzle);
-  if (vecType.getShape() == ArrayRef<int64_t>(fullShape)) {
+  VectorType fullType = fullDistributedType(swizzle, vecType.getElementType());
+  if (vecType == fullType) {
     return value;
   }
-  auto fullType = VectorType::get(fullShape, vecType.getElementType());
   return vector::ShapeCastOp::create(builder, loc, fullType, value);
 }
 
@@ -147,7 +195,6 @@ LogicalResult buildDataTiledMMAUnderlyingOperations(
   // Reassemble per-intrinsic ACC pieces into the swizzle's distributed form,
   // then shape_cast to the original output type as the final step inside the
   // HoistableConversionOp body (paired with the inverse cast above).
-  SmallVector<int64_t> accFullShape = fullDistributedShape(accSwizzle);
   SmallVector<int64_t> accCrossIntrinsicShape =
       sliceSwizzledShape(accSwizzle, [](TileSwizzle::Dim dim) {
         return dim.kind() == TileSwizzle::Dim::Kind::CrossIntrinsic;
@@ -158,7 +205,10 @@ LogicalResult buildDataTiledMMAUnderlyingOperations(
       });
   Type origAccType = outputs[0].getType();
   Type accElemType = cast<VectorType>(origAccType).getElementType();
-  auto fullAccType = VectorType::get(accFullShape, accElemType);
+  auto fullAccType = fullDistributedType(accSwizzle, accElemType);
+  bool accHasScalable =
+      llvm::any_of(fullAccType.getScalableDims(),
+                   [](bool b) { return b; });
 
   auto reassembleOp = IREE::Util::HoistableConversionOp::create(
       builder, loc, /*tag=*/kDataTiledAccReassemble,
@@ -169,12 +219,42 @@ LogicalResult buildDataTiledMMAUnderlyingOperations(
         SmallVector<int64_t> indices(dstRank, 0);
         Value acc =
             arith::ConstantOp::create(b, loc, b.getZeroAttr(fullAccType));
-        for (Value intrAcc : args) {
-          Value expandedAcc = vector::ShapeCastOp::create(
-              b, loc, VectorType::get(accInternalShape, accElemType), intrAcc);
-          acc = vector::InsertStridedSliceOp::create(b, loc, expandedAcc, acc,
-                                                     indices, strides);
-          incrementIndices(indices, accCrossIntrinsicShape);
+        if (accHasScalable) {
+          // Scalable-safe reassembly. Each per-intrinsic fragment is the
+          // scalable subvector (e.g. `vector<[4]xf32>` for SVE); shape_cast it
+          // back to the internal tile type (`vector<[4]x1xf32>`) and
+          // `vector.insert` it at the leading cross-intrinsic coordinates. The
+          // `numCrossIntrinsic` leading fixed dims are the insertion
+          // coordinates; the scalable dims stay in place at the tail.
+          int64_t numCrossIntrinsic = 0;
+          for (int64_t size : accCrossIntrinsicShape) {
+            numCrossIntrinsic += (size > 1);
+          }
+          auto internalAccType = VectorType::get(
+              fullAccType.getShape().drop_front(numCrossIntrinsic), accElemType,
+              fullAccType.getScalableDims().drop_front(numCrossIntrinsic));
+          for (Value intrAcc : args) {
+            if (intrAcc.getType() != internalAccType) {
+              intrAcc = vector::ShapeCastOp::create(b, loc, internalAccType,
+                                                    intrAcc);
+            }
+            acc = vector::InsertOp::create(
+                b, loc, intrAcc, acc,
+                ArrayRef<int64_t>(indices).take_front(numCrossIntrinsic));
+            incrementIndices(
+                MutableArrayRef<int64_t>(indices).take_front(numCrossIntrinsic),
+                ArrayRef<int64_t>(accCrossIntrinsicShape)
+                    .take_front(numCrossIntrinsic));
+          }
+        } else {
+          for (Value intrAcc : args) {
+            Value expandedAcc = vector::ShapeCastOp::create(
+                b, loc, VectorType::get(accInternalShape, accElemType),
+                intrAcc);
+            acc = vector::InsertStridedSliceOp::create(b, loc, expandedAcc, acc,
+                                                       indices, strides);
+            incrementIndices(indices, accCrossIntrinsicShape);
+          }
         }
         if (acc.getType() != origAccType) {
           acc = vector::ShapeCastOp::create(b, loc, origAccType, acc);
