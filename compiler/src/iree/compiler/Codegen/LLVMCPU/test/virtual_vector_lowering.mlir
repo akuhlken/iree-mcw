@@ -153,3 +153,150 @@ func.func @lower_avx512_1x16x1_f32(
 //   CHECK-NOT:   iree_codegen.inner_tiled
 //   CHECK-NOT:   util.hoistable_conversion
 //       CHECK:   llvm.call_intrinsic "llvm.fma.v16f32"({{.*}}) : (vector<16xf32>, vector<16xf32>, vector<16xf32>) -> vector<16xf32>
+
+// -----
+
+// NEON `fmla` natural orientation (1×4×1): the scalar LHS is broadcast to the
+// 4-lane RHS/acc vector and the whole thing lowers to one fixed-width
+// `llvm.fma.v4f32`; the `inner_tiled` op is gone.
+
+#contraction_accesses = [
+ affine_map<(i, j, k) -> (i, k)>,
+ affine_map<(i, j, k) -> (j, k)>,
+ affine_map<(i, j, k) -> (i, j)>
+]
+func.func @lower_arm_neon_fmla_1x4x1_f32(
+    %lhs: vector<1x1x1x1xf32>, %rhs: vector<1x1x4x1xf32>,
+    %acc: vector<1x1x1x4xf32>) -> vector<1x1x1x4xf32> {
+  %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%acc) {
+    indexing_maps = #contraction_accesses,
+    iterator_types = [#linalg.iterator_type<parallel>,
+                      #linalg.iterator_type<parallel>,
+                      #linalg.iterator_type<reduction>],
+    kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_NEON_FMLA_1x4x1_F32_F32>,
+    semantics = #iree_cpu.mma_semantics<>
+  } : vector<1x1x1x1xf32>, vector<1x1x4x1xf32> into vector<1x1x1x4xf32>
+  return %0 : vector<1x1x1x4xf32>
+}
+
+// CHECK-LABEL: func @lower_arm_neon_fmla_1x4x1_f32
+//   CHECK-NOT:   iree_codegen.inner_tiled
+//   CHECK-NOT:   util.hoistable_conversion
+//       CHECK:   vector.broadcast {{.*}} : f32 to vector<4xf32>
+//       CHECK:   llvm.call_intrinsic "llvm.fma.v4f32"({{.*}}) : (vector<4xf32>, vector<4xf32>, vector<4xf32>) -> vector<4xf32>
+
+// -----
+
+// NEON `fmla` swapped orientation (4×1×1): the scalar RHS is broadcast.
+
+#contraction_accesses = [
+ affine_map<(i, j, k) -> (i, k)>,
+ affine_map<(i, j, k) -> (j, k)>,
+ affine_map<(i, j, k) -> (i, j)>
+]
+func.func @lower_arm_neon_fmla_4x1x1_f32(
+    %lhs: vector<1x1x4x1xf32>, %rhs: vector<1x1x1x1xf32>,
+    %acc: vector<1x1x4x1xf32>) -> vector<1x1x4x1xf32> {
+  %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%acc) {
+    indexing_maps = #contraction_accesses,
+    iterator_types = [#linalg.iterator_type<parallel>,
+                      #linalg.iterator_type<parallel>,
+                      #linalg.iterator_type<reduction>],
+    kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_NEON_FMLA_4x1x1_F32_F32>,
+    semantics = #iree_cpu.mma_semantics<>
+  } : vector<1x1x4x1xf32>, vector<1x1x1x1xf32> into vector<1x1x4x1xf32>
+  return %0 : vector<1x1x4x1xf32>
+}
+
+// CHECK-LABEL: func @lower_arm_neon_fmla_4x1x1_f32
+//   CHECK-NOT:   iree_codegen.inner_tiled
+//   CHECK-NOT:   util.hoistable_conversion
+//       CHECK:   llvm.call_intrinsic "llvm.fma.v4f32"({{.*}}) : (vector<4xf32>, vector<4xf32>, vector<4xf32>) -> vector<4xf32>
+
+// -----
+
+// SVE `fmla` natural orientation (1×4VL×1): the scalar LHS is broadcast to a
+// *scalable* vector and the intrinsic is `llvm.aarch64.sve.fmla`. The scalable `[4]`
+// type survives all the way through the lowering.
+
+#contraction_accesses = [
+ affine_map<(i, j, k) -> (i, k)>,
+ affine_map<(i, j, k) -> (j, k)>,
+ affine_map<(i, j, k) -> (i, j)>
+]
+func.func @lower_arm_sve_fmla_1x4vlx1_f32(
+    %lhs: vector<1x1x1x1xf32>, %rhs: vector<1x1x[4]x1xf32>,
+    %acc: vector<1x1x[4]x1xf32>) -> vector<1x1x[4]x1xf32> {
+  %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%acc) {
+    indexing_maps = #contraction_accesses,
+    iterator_types = [#linalg.iterator_type<parallel>,
+                      #linalg.iterator_type<parallel>,
+                      #linalg.iterator_type<reduction>],
+    kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32>,
+    semantics = #iree_cpu.mma_semantics<>
+  } : vector<1x1x1x1xf32>, vector<1x1x[4]x1xf32> into vector<1x1x[4]x1xf32>
+  return %0 : vector<1x1x[4]x1xf32>
+}
+
+// CHECK-LABEL: func @lower_arm_sve_fmla_1x4vlx1_f32
+//   CHECK-NOT:   iree_codegen.inner_tiled
+//   CHECK-NOT:   util.hoistable_conversion
+//       CHECK:   vector.broadcast {{.*}} : f32 to vector<[4]xf32>
+//       CHECK:   llvm.call_intrinsic "llvm.aarch64.sve.fmla"({{.*}}) : (vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>, vector<[4]xf32>) -> vector<[4]xf32>
+
+// -----
+
+// SVE `fmla` swapped orientation (4VL×1×1): the scalar RHS is broadcast to a
+// scalable vector.
+
+#contraction_accesses = [
+ affine_map<(i, j, k) -> (i, k)>,
+ affine_map<(i, j, k) -> (j, k)>,
+ affine_map<(i, j, k) -> (i, j)>
+]
+func.func @lower_arm_sve_fmla_4vlx1x1_f32(
+    %lhs: vector<1x1x[4]x1xf32>, %rhs: vector<1x1x1x1xf32>,
+    %acc: vector<1x1x[4]x1xf32>) -> vector<1x1x[4]x1xf32> {
+  %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%acc) {
+    indexing_maps = #contraction_accesses,
+    iterator_types = [#linalg.iterator_type<parallel>,
+                      #linalg.iterator_type<parallel>,
+                      #linalg.iterator_type<reduction>],
+    kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_SVE_FMLA_4VLx1x1_F32_F32>,
+    semantics = #iree_cpu.mma_semantics<>
+  } : vector<1x1x[4]x1xf32>, vector<1x1x1x1xf32> into vector<1x1x[4]x1xf32>
+  return %0 : vector<1x1x[4]x1xf32>
+}
+
+// CHECK-LABEL: func @lower_arm_sve_fmla_4vlx1x1_f32
+//   CHECK-NOT:   iree_codegen.inner_tiled
+//   CHECK-NOT:   util.hoistable_conversion
+//       CHECK:   llvm.call_intrinsic "llvm.aarch64.sve.fmla"({{.*}}) : (vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>, vector<[4]xf32>) -> vector<[4]xf32>
+
+// -----
+
+// SVE `fmla` with intrinsics_n = 2: the cross-intrinsic N dim is unrolled into
+// two per-intrinsic `llvm.aarch64.sve.fmla` calls, and the scalable extraction /
+// reassembly keeps the `[4]` scalable flag throughout.
+
+#contraction_accesses = [
+ affine_map<() -> ()>,
+ affine_map<() -> ()>,
+ affine_map<() -> ()>
+]
+func.func @lower_arm_sve_fmla_intrinsics_n2(
+    %lhs: vector<1x1xf32>, %rhs: vector<2x[4]x1xf32>,
+    %acc: vector<2x[4]x1xf32>) -> vector<2x[4]x1xf32> {
+  %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%acc) {
+    indexing_maps = #contraction_accesses,
+    iterator_types = [],
+    kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32, intrinsics_n = 2>,
+    semantics = #iree_cpu.mma_semantics<>
+  } : vector<1x1xf32>, vector<2x[4]x1xf32> into vector<2x[4]x1xf32>
+  return %0 : vector<2x[4]x1xf32>
+}
+
+// CHECK-LABEL: func @lower_arm_sve_fmla_intrinsics_n2
+//   CHECK-NOT:   iree_codegen.inner_tiled
+//       CHECK:   llvm.call_intrinsic "llvm.aarch64.sve.fmla"({{.*}}) : (vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>, vector<[4]xf32>) -> vector<[4]xf32>
+//       CHECK:   llvm.call_intrinsic "llvm.aarch64.sve.fmla"({{.*}}) : (vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>, vector<[4]xf32>) -> vector<[4]xf32>

@@ -419,3 +419,123 @@ module attributes { transform.with_named_sequence } {
 //   CHECK-DAG:   vector.shuffle %{{.+}} [0, 0, 0, 0, 4, 4, 4, 4, 8, 8, 8, 8, 12, 12, 12, 12]
 //   CHECK-DAG:   vector.shuffle %{{.+}} [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3]
 //       CHECK-COUNT-16:   llvm.call_intrinsic "llvm.x86.avx512.vpdpwssd.512"
+
+// -----
+
+// AArch64 SVE `fmla` natural orientation (1×4VL×1), single intrinsic tile.
+// The scalar LHS is broadcast to a scalable vector and lowered to the
+// target-specific SVE intrinsic `llvm.aarch64.sve.fmla` with an undef
+// predicate, keeping the `[4]` scalable flag throughout.
+
+#contraction_accesses = [
+ affine_map<() -> ()>,
+ affine_map<() -> ()>,
+ affine_map<() -> ()>
+]
+func.func @lower_arm_sve_fmla_1x4vlx1_f32_natural(
+    %lhs: vector<1x1xf32>, %rhs: vector<[4]x1xf32>, %acc: vector<[4]x1xf32>)
+    -> vector<[4]x1xf32> {
+  %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%acc) {
+    indexing_maps = #contraction_accesses,
+    iterator_types = [],
+    kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32>,
+    semantics = #iree_cpu.mma_semantics<>
+  } : vector<1x1xf32>, vector<[4]x1xf32> into vector<[4]x1xf32>
+  return %0 : vector<[4]x1xf32>
+}
+
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(%root: !transform.any_op {transform.readonly}) {
+    %func = transform.structured.match ops{["func.func"]} in %root
+        : (!transform.any_op) -> !transform.any_op
+    transform.apply_patterns to %func {
+      transform.apply_patterns.iree.lower_inner_tiled
+    } : !transform.any_op
+    transform.yield
+  }
+}
+
+// CHECK-LABEL: func @lower_arm_sve_fmla_1x4vlx1_f32_natural
+//       CHECK:   llvm.mlir.undef : vector<[4]xi1>
+//       CHECK:   llvm.call_intrinsic "llvm.aarch64.sve.fmla"({{.*}}) : (vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>, vector<[4]xf32>) -> vector<[4]xf32>
+
+// -----
+
+// AArch64 SVE `fmla` swapped orientation (4VL×1×1), single intrinsic tile.
+// The scalable dim is on LHS/acc (M).
+
+#contraction_accesses = [
+ affine_map<() -> ()>,
+ affine_map<() -> ()>,
+ affine_map<() -> ()>
+]
+func.func @lower_arm_sve_fmla_4vlx1x1_f32_swapped(
+    %lhs: vector<[4]x1xf32>, %rhs: vector<1x1xf32>, %acc: vector<[4]x1xf32>)
+    -> vector<[4]x1xf32> {
+  %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%acc) {
+    indexing_maps = #contraction_accesses,
+    iterator_types = [],
+    kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_SVE_FMLA_4VLx1x1_F32_F32>,
+    semantics = #iree_cpu.mma_semantics<>
+  } : vector<[4]x1xf32>, vector<1x1xf32> into vector<[4]x1xf32>
+  return %0 : vector<[4]x1xf32>
+}
+
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(%root: !transform.any_op {transform.readonly}) {
+    %func = transform.structured.match ops{["func.func"]} in %root
+        : (!transform.any_op) -> !transform.any_op
+    transform.apply_patterns to %func {
+      transform.apply_patterns.iree.lower_inner_tiled
+    } : !transform.any_op
+    transform.yield
+  }
+}
+
+// CHECK-LABEL: func @lower_arm_sve_fmla_4vlx1x1_f32_swapped
+//       CHECK:   llvm.mlir.undef : vector<[4]xi1>
+//       CHECK:   llvm.call_intrinsic "llvm.aarch64.sve.fmla"({{.*}}) : (vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>, vector<[4]xf32>) -> vector<[4]xf32>
+
+// -----
+
+// AArch64 SVE `fmla` natural orientation with intrinsics_n = 2. Multiple
+// intrinsic tiles are required to exercise the scalable-vector extraction and
+// reassembly in `distributeMmaFragmentToIntrinsics` and the acc reassembly:
+// an unroll factor of one never touches the cross-intrinsic extraction path.
+
+#contraction_accesses = [
+ affine_map<() -> ()>,
+ affine_map<() -> ()>,
+ affine_map<() -> ()>
+]
+func.func @lower_arm_sve_fmla_1x4vlx1_f32_intrinsics_n2(
+    %lhs: vector<1x1xf32>, %rhs: vector<2x[4]x1xf32>, %acc: vector<2x[4]x1xf32>)
+    -> vector<2x[4]x1xf32> {
+  %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%acc) {
+    indexing_maps = #contraction_accesses,
+    iterator_types = [],
+    kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32, intrinsics_n = 2>,
+    semantics = #iree_cpu.mma_semantics<>
+  } : vector<1x1xf32>, vector<2x[4]x1xf32> into vector<2x[4]x1xf32>
+  return %0 : vector<2x[4]x1xf32>
+}
+
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(%root: !transform.any_op {transform.readonly}) {
+    %func = transform.structured.match ops{["func.func"]} in %root
+        : (!transform.any_op) -> !transform.any_op
+    transform.apply_patterns to %func {
+      transform.apply_patterns.iree.lower_inner_tiled
+    } : !transform.any_op
+    transform.yield
+  }
+}
+
+// CHECK-LABEL: func @lower_arm_sve_fmla_1x4vlx1_f32_intrinsics_n2
+//       CHECK:   llvm.mlir.undef : vector<[4]xi1>
+//       CHECK:   util.hoistable_conversion "data_tiled_acc_distribute"
+//       CHECK:     vector.extract
+//       CHECK:   llvm.call_intrinsic "llvm.aarch64.sve.fmla"({{.*}}) : (vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>, vector<[4]xf32>) -> vector<[4]xf32>
+//       CHECK:   llvm.call_intrinsic "llvm.aarch64.sve.fmla"({{.*}}) : (vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>, vector<[4]xf32>) -> vector<[4]xf32>
+//       CHECK:   util.hoistable_conversion "data_tiled_acc_reassemble"
+//       CHECK:     vector.insert

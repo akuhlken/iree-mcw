@@ -327,6 +327,12 @@ static IREE::Codegen::TileMxNxK getTileMxNxK(IREE::CPU::DataTiledMMAAttr mma) {
 /// 1:1 to a single `+feature`, but the AVX2 f32 MMA intrinsics require both
 /// `+avx2` and `+fma` (FMA3 is a separate ISA extension from AVX2 itself,
 /// and our AVX2 intrinsics lower to `vfmadd...`).
+///
+/// This helper is x86-only. AArch64 availability does not fit its "all
+/// features required" model: SVE is `+sve` OR `+sve2` (OR semantics), and NEON
+/// is part of the base AArch64 Advanced SIMD environment (no feature string).
+/// AArch64 candidates are therefore selected directly in
+/// `getMmaIntrinsicsForTargetConfig`.
 static SmallVector<StringRef>
 getMmaIntrinsicRequiredFeatures(IREE::CPU::MMAIntrinsic intr) {
   using IREE::CPU::MMAIntrinsic;
@@ -427,11 +433,16 @@ static bool isMmaIntrinsicArrayValid(MLIRContext *ctx,
   // (3) and (4) need types *with* signedness so e.g. vpdpbusd's natural
   // `ui8` LHS visibly swaps with its sibling's `ui8` RHS. Read directly
   // from `getABCElementTypes`; `getUndistributedTileTypes` would strip it.
+  // Shapes come from the descriptor's swizzle (via a unary-unroll
+  // `DataTiledMMAAttr`) rather than `getRowMajorTilesMNKShape`, which has no
+  // entry for scalable (SVE) tiles; `getTileMxNxK` treats symbolic scalable
+  // dims by their minimum multiplier, matching `getRegisterSpaceBytes`.
   auto getShapeAndTypes = [&](MMAIntrinsic intr) {
-    auto mnk = IREE::CPU::getRowMajorTilesMNKShape(intr);
-    assert(mnk && "validator only handles row-major-tile intrinsics");
-    auto [m, n, k] = *mnk;
     auto [lhs, rhs, acc] = IREE::CPU::getABCElementTypes(ctx, intr);
+    auto mma = IREE::CPU::DataTiledMMAAttr::get(
+        ctx, intr, /*intrinsicsM=*/1, /*intrinsicsN=*/1, /*intrinsicsK=*/1,
+        lhs, rhs, acc);
+    auto [m, n, k] = IREE::CPU::getTileMxNxK(mma);
     return std::make_tuple(m, n, k, lhs, rhs, acc);
   };
 
@@ -526,6 +537,20 @@ getMmaIntrinsicsForTargetConfig(DictionaryAttr config) {
         out.push_back(intr);
       }
     }
+  } else if (isAArch64(config)) {
+    // SVE availability is `+sve` OR `+sve2`, which `getMmaIntrinsicRequiredFeatures`
+    // (all-required) cannot express, so the OR is checked here via
+    // `hasAnySVEFeature`. In scalable-vector mode we offer only the SVE pair,
+    // never NEON: the two have near-equal cost estimates, so letting them
+    // compete would make SVE selection unstable. NEON is base AArch64 (no
+    // feature string) and is offered only when scalable vectorization is off.
+    if (isScalableVectorizationEnabled() && hasAnySVEFeature(config)) {
+      out.push_back(MMAIntrinsic::MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32);
+      out.push_back(MMAIntrinsic::MMA_ARM_SVE_FMLA_4VLx1x1_F32_F32);
+    } else {
+      out.push_back(MMAIntrinsic::MMA_ARM_NEON_FMLA_1x4x1_F32_F32);
+      out.push_back(MMAIntrinsic::MMA_ARM_NEON_FMLA_4x1x1_F32_F32);
+    }
   }
   out.push_back(pickGenericScalarMMAForTarget(config));
   assert(isMmaIntrinsicArrayValid(config.getContext(), out) &&
@@ -573,11 +598,14 @@ getIntrinsicInfo(MLIRContext *ctx, ArrayRef<Type> elementTypes,
       accTy != elementTypes[2]) {
     return std::nullopt;
   }
-  auto mnk = IREE::CPU::getRowMajorTilesMNKShape(intr);
-  if (!mnk) {
-    return std::nullopt;
-  }
-  auto [m, n, k] = *mnk;
+  // Derive {M, N, K} from the descriptor's swizzle rather than
+  // `getRowMajorTilesMNKShape`, which has no entry for scalable (SVE) tiles.
+  // `getTileMxNxK` treats symbolic scalable dims by their minimum multiplier,
+  // mirroring `getRegisterSpaceBytes`'s capacity simplification.
+  auto mma = IREE::CPU::DataTiledMMAAttr::get(
+      ctx, intr, /*intrinsicsM=*/1, /*intrinsicsN=*/1, /*intrinsicsK=*/1,
+      lhsTy, rhsTy, accTy);
+  auto [m, n, k] = IREE::CPU::getTileMxNxK(mma);
   IntrinsicInfo info;
   info.intrinsicM = m;
   info.intrinsicN = n;

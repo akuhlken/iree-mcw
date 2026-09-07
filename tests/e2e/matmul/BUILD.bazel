@@ -221,12 +221,26 @@ X86_64_AVX512_BF16 = X86_64_AVX512 + [
 
 # LLVMCPU, data-tiling lowering matmul to iree_codegen.inner_tiled
 # (the new MMA-intrinsic path) instead of linalg.mmt4d.
+#
+# On AArch64, `--iree-llvmcpu-enable-scalable-vectorization` combined with
+# `+sve`/`+sve2` selects the SVE `fmla` inner_tiled intrinsic; the same
+# targets with scalable vectorization *off* (and base AArch64 with no SVE
+# feature) fall back to the fixed-width NEON `fmla`. Both are exercised by the
+# target variants below, with the generator's default shapes covering natural
+# and swapped orientations, multi-intrinsic tiles, narrow M/N, and non-multiple
+# sizes; `accumulate=True`/`False` cases cover zero vs non-zero accumulator
+# initialization.
+#
+# Note: the SVE `fmla` inner_tiled intrinsic is f32-only, so the `arm_64:sve` /
+# `arm_64:sve2` target variants are placed on the f32/f32 branch below (not
+# f16/f16).
 [iree_generated_e2e_runner_test(
     name = "e2e_matmul_cpu_dt_inner_tiled_%s_%s" % (lhs_rhs_type, acc_type),
     timeout = "moderate" if lhs_rhs_type == "f32" and acc_type == "f32" else None,
     compiler_flags = [
         "--iree-opt-data-tiling",
         "--iree-llvmcpu-enable-inner-tiled",
+        "--iree-llvmcpu-enable-scalable-vectorization",
     ] + (["--iree-input-demote-f64-to-f32=false"] if acc_type == "f64" else []),
     generator = ":generate_e2e_matmul_tests",
     generator_args = [
@@ -247,10 +261,12 @@ X86_64_AVX512_BF16 = X86_64_AVX512 + [
                                    ] if lhs_rhs_type == "i8" and acc_type == "i32" else [
                                        "x86_64:avx2:" + ",".join(X86_64_AVX2),
                                        "x86_64:avx512:" + ",".join(X86_64_AVX512),
-                                   ] if lhs_rhs_type == "f32" and acc_type == "f32" else [
-                                       "x86_64:avx2:" + ",".join(X86_64_AVX2),
-                                       "x86_64:avx512:" + ",".join(X86_64_AVX512),
-                                   ] if lhs_rhs_type == "f16" and acc_type == "f16" else [
+                                       "arm_64:sve:+sve",
+                                       "arm_64:sve2:+sve2",
+                                    ] if lhs_rhs_type == "f32" and acc_type == "f32" else [
+                                        "x86_64:avx2:" + ",".join(X86_64_AVX2),
+                                        "x86_64:avx512:" + ",".join(X86_64_AVX512),
+                                    ] if lhs_rhs_type == "f16" and acc_type == "f16" else [
                                        "x86_64:avx2:" + ",".join(X86_64_AVX2),
                                        "x86_64:avx512:" + ",".join(X86_64_AVX512),
                                    ] if lhs_rhs_type == "f16" and acc_type == "f32" else [

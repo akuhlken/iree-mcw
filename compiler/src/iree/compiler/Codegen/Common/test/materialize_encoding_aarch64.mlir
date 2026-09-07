@@ -672,3 +672,89 @@ func.func @matmul_fp6_f32_aarch64_generic(
 // CHECK-LABEL: func @matmul_fp6_f32_aarch64_generic(
 //       CHECK:   %[[INNER_FP6:.+]] = iree_codegen.inner_tiled
 //  CHECK-SAME:     kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_GENERIC_SCALAR_1x1x1_REG16, intrinsics_n = 2, intrinsics_k = 4, lhs_type = f6E3M2FN, rhs_type = f6E3M2FN, acc_type = f32>
+
+// -----
+
+// AArch64 +sve with scalable vectorization enabled selects the SVE `fmla`
+// intrinsic (natural orientation — the canonical SVE form keeps N scalable,
+// so the N inner tile is dynamic). With scalable vectorization disabled the
+// same target selects the fixed-width NEON `fmla` instead, never SVE.
+
+#map_sve = affine_map<(d0, d1, d2) -> (d0, d2)>
+#map_sve1 = affine_map<(d0, d1, d2) -> (d2, d1)>
+#map_sve2 = affine_map<(d0, d1, d2) -> (d0, d1)>
+#encoding_sve_lhs = #iree_encoding.encoding<operand_index = 0, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_sve, #map_sve1, #map_sve2], iteration_sizes = [?, ?, ?]>
+#encoding_sve_rhs = #iree_encoding.encoding<operand_index = 1, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_sve, #map_sve1, #map_sve2], iteration_sizes = [?, ?, ?]>
+#encoding_sve_res = #iree_encoding.encoding<operand_index = 2, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_sve, #map_sve1, #map_sve2], iteration_sizes = [?, ?, ?]>
+func.func @matmul_f32_aarch64_sve_inner_tiled(
+    %lhs: tensor<?x?xf32, #encoding_sve_lhs>,
+    %rhs: tensor<?x?xf32, #encoding_sve_rhs>,
+    %acc: tensor<?x?xf32, #encoding_sve_res>
+) -> tensor<?x?xf32, #encoding_sve_res> attributes {
+  hal.executable.target = #hal.executable.target<"llvm-cpu", "xyz", {target_triple = "aarch64-xyz-xyz", cpu_features = "+sve", enable_inner_tiled = true, iree.encoding.resolver = #iree_cpu.cpu_encoding_resolver<>}>
+} {
+  %0 = linalg.matmul ins(%lhs, %rhs : tensor<?x?xf32, #encoding_sve_lhs>, tensor<?x?xf32, #encoding_sve_rhs>)
+      outs(%acc : tensor<?x?xf32, #encoding_sve_res>) -> tensor<?x?xf32, #encoding_sve_res>
+  return %0 : tensor<?x?xf32, #encoding_sve_res>
+}
+// CHECK-LABEL: func @matmul_f32_aarch64_sve_inner_tiled
+// WITH-SVE:  %[[INNER_SVE:.+]] = iree_codegen.inner_tiled
+// WITH-SVE-SAME: kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32
+// NO-SVE:  %[[INNER_NEON:.+]] = iree_codegen.inner_tiled
+// NO-SVE-SAME: kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_NEON_FMLA_1x4x1_F32_F32
+
+// -----
+
+// +sve2 selects the same SVE `fmla` intrinsic (+sve OR +sve2).
+
+#map_sve2 = affine_map<(d0, d1, d2) -> (d0, d2)>
+#map_sve21 = affine_map<(d0, d1, d2) -> (d2, d1)>
+#map_sve22 = affine_map<(d0, d1, d2) -> (d0, d1)>
+#encoding_sve2_lhs = #iree_encoding.encoding<operand_index = 0, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_sve2, #map_sve21, #map_sve22], iteration_sizes = [?, ?, ?]>
+#encoding_sve2_rhs = #iree_encoding.encoding<operand_index = 1, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_sve2, #map_sve21, #map_sve22], iteration_sizes = [?, ?, ?]>
+#encoding_sve2_res = #iree_encoding.encoding<operand_index = 2, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_sve2, #map_sve21, #map_sve22], iteration_sizes = [?, ?, ?]>
+func.func @matmul_f32_aarch64_sve2_inner_tiled(
+    %lhs: tensor<?x?xf32, #encoding_sve2_lhs>,
+    %rhs: tensor<?x?xf32, #encoding_sve2_rhs>,
+    %acc: tensor<?x?xf32, #encoding_sve2_res>
+) -> tensor<?x?xf32, #encoding_sve2_res> attributes {
+  hal.executable.target = #hal.executable.target<"llvm-cpu", "xyz", {target_triple = "aarch64-xyz-xyz", cpu_features = "+sve2", enable_inner_tiled = true, iree.encoding.resolver = #iree_cpu.cpu_encoding_resolver<>}>
+} {
+  %0 = linalg.matmul ins(%lhs, %rhs : tensor<?x?xf32, #encoding_sve2_lhs>, tensor<?x?xf32, #encoding_sve2_rhs>)
+      outs(%acc : tensor<?x?xf32, #encoding_sve2_res>) -> tensor<?x?xf32, #encoding_sve2_res>
+  return %0 : tensor<?x?xf32, #encoding_sve2_res>
+}
+// CHECK-LABEL: func @matmul_f32_aarch64_sve2_inner_tiled
+// WITH-SVE:  %[[INNER_SVE2:.+]] = iree_codegen.inner_tiled
+// WITH-SVE-SAME: kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32
+// NO-SVE:  %[[INNER_NEON2:.+]] = iree_codegen.inner_tiled
+// NO-SVE-SAME: kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_NEON_FMLA_1x4x1_F32_F32
+
+// -----
+
+// Base AArch64 (no SVE feature) selects the fixed-width NEON `fmla` in both
+// scalable-vectorization runs, since NEON is part of the base AArch64
+// Advanced SIMD environment.
+
+#map_base = affine_map<(d0, d1, d2) -> (d0, d2)>
+#map_base1 = affine_map<(d0, d1, d2) -> (d2, d1)>
+#map_base2 = affine_map<(d0, d1, d2) -> (d0, d1)>
+#encoding_base_lhs = #iree_encoding.encoding<operand_index = 0, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_base, #map_base1, #map_base2], iteration_sizes = [?, ?, ?]>
+#encoding_base_rhs = #iree_encoding.encoding<operand_index = 1, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_base, #map_base1, #map_base2], iteration_sizes = [?, ?, ?]>
+#encoding_base_res = #iree_encoding.encoding<operand_index = 2, op_type = matmul, element_types = [f32, f32, f32], user_indexing_maps = [#map_base, #map_base1, #map_base2], iteration_sizes = [?, ?, ?]>
+func.func @matmul_f32_aarch64_neon_inner_tiled(
+    %lhs: tensor<?x?xf32, #encoding_base_lhs>,
+    %rhs: tensor<?x?xf32, #encoding_base_rhs>,
+    %acc: tensor<?x?xf32, #encoding_base_res>
+) -> tensor<?x?xf32, #encoding_base_res> attributes {
+  hal.executable.target = #hal.executable.target<"llvm-cpu", "xyz", {target_triple = "aarch64-xyz-xyz", enable_inner_tiled = true, iree.encoding.resolver = #iree_cpu.cpu_encoding_resolver<>}>
+} {
+  %0 = linalg.matmul ins(%lhs, %rhs : tensor<?x?xf32, #encoding_base_lhs>, tensor<?x?xf32, #encoding_base_rhs>)
+      outs(%acc : tensor<?x?xf32, #encoding_base_res>) -> tensor<?x?xf32, #encoding_base_res>
+  return %0 : tensor<?x?xf32, #encoding_base_res>
+}
+// CHECK-LABEL: func @matmul_f32_aarch64_neon_inner_tiled
+// WITH-SVE:  %[[INNER_NEON3:.+]] = iree_codegen.inner_tiled
+// WITH-SVE-SAME: kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_NEON_FMLA_1x4x1_F32_F32
+// NO-SVE:  %[[INNER_NEON4:.+]] = iree_codegen.inner_tiled
+// NO-SVE-SAME: kind = #iree_cpu.data_tiled_mma_layout<intrinsic = MMA_ARM_NEON_FMLA_1x4x1_F32_F32

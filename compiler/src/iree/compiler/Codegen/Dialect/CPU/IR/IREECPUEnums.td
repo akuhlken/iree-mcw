@@ -165,6 +165,17 @@ def MMA_X86_AVX512VNNI_16x1x4_I32_I8_UI8
 def MMA_X86_AVX512VNNI_16x16x2_I32_I8_CASTI16
     : I32EnumAttrCase<"MMA_X86_AVX512VNNI_16x16x2_I32_I8_CASTI16", 0x13C6>;
 
+// AArch64 NEON `fmla` (f32, f32): fixed-width 1×4×1 / 4×1×1 matmul tile.
+// NEON is a 128-bit ISA, so the 4-lane dim is static (unlike SVE's scalable
+// `4VL`). `fmla v.4s` is a by-element multiply-accumulate
+// (`fmla vd.4s, vn.4s, vm.s[idx]`): the natural orientation spreads the 4
+// lanes along N and broadcasts a single LHS element, and the swapped
+// orientation mirrors that along M.
+def MMA_ARM_NEON_FMLA_1x4x1_F32_F32
+    : I32EnumAttrCase<"MMA_ARM_NEON_FMLA_1x4x1_F32_F32", 0x2110>;
+def MMA_ARM_NEON_FMLA_4x1x1_F32_F32
+    : I32EnumAttrCase<"MMA_ARM_NEON_FMLA_4x1x1_F32_F32", 0x2111>;
+
 // AArch64 SVE `fmla` (f32, f32): N×1×1 or 1×N×1 matmul tile; N is a scalable
 // vector of 4 f32 lanes per 128-bit chunk (see `ArmSveVLIn128bitUnits`).
 def MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32
@@ -216,6 +227,9 @@ def IREECPU_MMAIntrinsic
            MMA_X86_AVX512VNNI_1x16x4_I32_UI8_I8,
            MMA_X86_AVX512VNNI_16x1x4_I32_I8_UI8,
            MMA_X86_AVX512VNNI_16x16x2_I32_I8_CASTI16,
+
+           // Arm NEON
+           MMA_ARM_NEON_FMLA_1x4x1_F32_F32, MMA_ARM_NEON_FMLA_4x1x1_F32_F32,
 
            // Arm SVE
            MMA_ARM_SVE_FMLA_1x4VLx1_F32_F32, MMA_ARM_SVE_FMLA_4VLx1x1_F32_F32,

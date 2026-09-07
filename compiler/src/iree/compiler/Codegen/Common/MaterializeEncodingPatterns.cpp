@@ -135,7 +135,7 @@ lowerOpWithEncoding(RewriterBase &rewriter, tensor::EmptyOp emptyOp,
   SmallVector<OpFoldResult> newShape = linalg::PackOp::getResultShape(
       rewriter, loc, sourceDims, *innerTileSizesOfr, encodingInfo.innerDimsPos,
       encodingInfo.outerDimsPerm);
-  newShape = getSwizzledShape(newShape, encodingInfo);
+  newShape = getSwizzledShape(rewriter, loc, newShape, encodingInfo);
   Operation *newEmptyOp = tensor::EmptyOp::create(rewriter, loc, newShape,
                                                   emptyType.getElementType());
   return newEmptyOp;
